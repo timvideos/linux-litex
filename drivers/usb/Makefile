@@ -10,7 +10,7 @@ obj-$(CONFIG_USB_DWC3)		+= dwc3/
 obj-$(CONFIG_USB_DWC2)		+= dwc2/
 
 obj-$(CONFIG_USB_MON)		+= mon/
-
+obj-$(CONFIG_USB_OHS900_HCD)		+= host/
 obj-$(CONFIG_PCI)		+= host/
 obj-$(CONFIG_USB_EHCI_HCD)	+= host/
 obj-$(CONFIG_USB_ISP116X_HCD)	+= host/
