@@ -330,6 +330,12 @@ config GPIO_XILINX
 	help
 	  Say yes here to support the Xilinx FPGA GPIO device
 
+config GPIO_JBTRIVIAL
+	bool "OpenCores JB-Trivial MM GPIO support"
+	depends on OPENRISC
+	help
+	  Say yes here to support the JB-Trivial FPGA GPIO device
+
 config GPIO_XTENSA
 	bool "Xtensa GPIO32 support"
 	depends on XTENSA
