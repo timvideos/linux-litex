@@ -1317,6 +1317,7 @@ static int ethoc_resume(struct platform_device *pdev)
 
 static struct of_device_id ethoc_match[] = {
 	{ .compatible = "opencores,ethoc", },
+	{ .compatible = "opencores,ethmac-rtlsvn338" },
 	{},
 };
 MODULE_DEVICE_TABLE(of, ethoc_match);
