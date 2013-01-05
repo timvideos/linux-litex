@@ -1,0 +1,5 @@
+LOAD_CURRENT_THREAD_INFO is not used anywhere
+
+Implement memcpy and memset (string.h)
+
+switch bootmem allocation over to memblock
