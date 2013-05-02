@@ -12,6 +12,7 @@
 #include <linux/module.h>
 #include <linux/serio.h>
 #include <linux/interrupt.h>
+#include <linux/platform_device.h>
 #include <linux/errno.h>
 #include <linux/slab.h>
 #include <linux/init.h>
