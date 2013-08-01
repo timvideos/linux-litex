@@ -284,6 +284,12 @@ config SPI_FSL_ESPI
 	  From MPC8536, 85xx platform uses the controller, and all P10xx,
 	  P20xx, P30xx,P40xx, P50xx uses this controller.
 
+config SPI_OCSIMPLE
+	tristate "OpenCores Simple SPI Controller"
+	depends on OPENRISC
+	help
+	  Driver for Simple SPI core from OpenCores.org 
+
 config SPI_OC_TINY
 	tristate "OpenCores tiny SPI"
 	depends on GPIOLIB
@@ -297,11 +303,6 @@ config SPI_OCTEON
 	help
 	  SPI host driver for the hardware found on some Cavium OCTEON
 	  SOCs.
-
-config SPI_OCSIMPLE
-	tristate "OpenCores Simple SPI Controller"
-	help
-	  Driver for Simple SPI core from OpenCores.org 
 
 config SPI_OMAP_UWIRE
 	tristate "OMAP1 MicroWire"
