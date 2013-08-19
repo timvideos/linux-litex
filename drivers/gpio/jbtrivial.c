@@ -114,8 +114,8 @@ static int jbgpio_dir_in(struct gpio_chip *gc, unsigned int gpio)
 
 	spin_lock_irqsave(&chip->gpio_lock, flags);
 
-	/* Set the GPIO bit in shadow register and set direction as input */
-	chip->gpio_dir[bank] |= (1 << g);
+	/* Clear the GPIO bit in shadow register and set direction as input */
+	chip->gpio_dir[bank] &= ~(1 << g);
 	iowrite8(chip->gpio_dir[bank], mm_gc->regs + chip->tri_offset + bank);
 
 	spin_unlock_irqrestore(&chip->gpio_lock, flags);
@@ -154,8 +154,8 @@ static int jbgpio_dir_out(struct gpio_chip *gc, unsigned int gpio, int val)
 		chip->gpio_state[bank] &= ~(1 << g);
 	iowrite8(chip->gpio_state[bank], mm_gc->regs + chip->data_offset + bank);
 
-	/* Clear the GPIO bit in shadow register and set direction as output */
-	chip->gpio_dir[bank] &= (~(1 << g));
+	/* Set the GPIO bit in shadow register and set direction as output */
+	chip->gpio_dir[bank] |= (1 << g);
 	iowrite8(chip->gpio_dir[bank], mm_gc->regs + chip->tri_offset + bank);
 
 	spin_unlock_irqrestore(&chip->gpio_lock, flags);
@@ -217,7 +217,7 @@ static int __devinit jbgpio_of_probe(struct device_node *np)
 */
 	/* Update GPIO direction shadow register with default value */
 	for (i=0; i<3; i++) 
-		chip->gpio_dir[i] = 0xFF; /* By default, all pins are inputs */
+		chip->gpio_dir[i] = 0x00; /* By default, all pins are inputs */
 /*	tree_info = of_get_property(np, "xlnx,tri-default", NULL);
 	if (tree_info)
 		chip->gpio_dir = *tree_info;
