@@ -466,18 +466,7 @@ static struct platform_driver ocspi_driver = {
 		.of_match_table = ocspi_match
 	}
 };
-
-static int __init ocspi_init(void)
-{
-	return platform_driver_register(&ocspi_driver);
-}
-module_init(ocspi_init);
-
-static void __exit ocspi_exit(void)
-{
-	platform_driver_unregister(&ocspi_driver);
-}
-module_exit(ocspi_exit);
+module_platform_driver(ocspi_driver);
 
 MODULE_DESCRIPTION("OpenCores Simple SPI driver");
 MODULE_AUTHOR("Jonas Bonn <jonas@southpole.se>");
