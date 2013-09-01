@@ -51,19 +51,11 @@
 #define OCSPI_SPER_ESPR			0x03
 
 struct ocspi {
-	struct work_struct	work;
-
-	/* Lock access to transfer list.	*/
-	spinlock_t		lock;
-
-	struct list_head	msg_queue;
 	struct spi_master	*master;
 	void __iomem		*base;
 	unsigned int		max_speed;
 	unsigned int		min_speed;
 };
-
-static struct workqueue_struct *ocspi_wq;
 
 static inline u8
 ocspi_read(struct ocspi* ocspi, unsigned int reg) {
@@ -250,73 +242,90 @@ out:
 	return xfer->len - count;
 }
 
-static void ocspi_work(struct work_struct *work)
+static int ocspi_transfer_one_message(struct spi_master *master,
+				      struct spi_message *m)
 {
-	struct ocspi *ocspi =
-		container_of(work, struct ocspi, work);
+	struct ocspi *ocspi = spi_master_get_devdata(master);
+	struct spi_device *spi = m->spi;
+	struct spi_transfer *t = NULL;
+	int par_override = 0;
+	int status = 0;
+	int cs_active = 0;
 
-	spin_lock_irq(&ocspi->lock);
-	while (!list_empty(&ocspi->msg_queue)) {
-		struct spi_message *m;
-		struct spi_device *spi;
-		struct spi_transfer *t = NULL;
-		int par_override = 0;
-		int status = 0;
-		int cs_active = 0;
 
-		m = container_of(ocspi->msg_queue.next, struct spi_message,
-				 queue);
+	/* Load defaults */
+	status = ocspi_setup_transfer(spi, NULL);
 
-		list_del_init(&m->queue);
-		spin_unlock_irq(&ocspi->lock);
+	if (status < 0)
+		goto msg_done;
 
-		spi = m->spi;
+	list_for_each_entry(t, &m->transfers, transfer_list) {
+		unsigned int bits_per_word = spi->bits_per_word;
 
-		/* Load defaults */
-		status = ocspi_setup_transfer(spi, NULL);
-
-		if (status < 0)
+		if (t->tx_buf == NULL && t->rx_buf == NULL && t->len) {
+			dev_err(&spi->dev,
+				"message rejected : "
+				"invalid transfer data buffers\n");
+			status = -EIO;
 			goto msg_done;
-
-		list_for_each_entry(t, &m->transfers, transfer_list) {
-			if (par_override || t->speed_hz || t->bits_per_word) {
-				par_override = 1;
-				status = ocspi_setup_transfer(spi, t);
-				if (status < 0)
-					break;
-				if (!t->speed_hz && !t->bits_per_word)
-					par_override = 0;
-			}
-
-			if (!cs_active) {
-				ocspi_set_cs(ocspi, (1 << spi->chip_select));
-				cs_active = 1;
-			}
-
-			if (t->len)
-				m->actual_length +=
-					ocspi_write_read(spi, t);
-
-			if (t->delay_usecs)
-				udelay(t->delay_usecs);
-
-			if (t->cs_change) {
-				ocspi_set_cs(ocspi, 0);
-				cs_active = 0;
-			}
 		}
 
-msg_done:
-		if (cs_active)
+		if ((t != NULL) && t->bits_per_word)
+			bits_per_word = t->bits_per_word;
+
+		if ((bits_per_word != 8)) {
+			dev_err(&spi->dev,
+				"message rejected : "
+				"invalid transfer bits_per_word (%d bits)\n",
+				bits_per_word);
+			status = -EIO;
+			goto msg_done;
+                }
+
+		if (t->speed_hz && t->speed_hz < ocspi->min_speed) {
+			dev_err(&spi->dev,
+				"message rejected : "
+				"device min speed (%d Hz) exceeds "
+				"required transfer speed (%d Hz)\n",
+				ocspi->min_speed, t->speed_hz);
+			status = -EIO;
+			goto msg_done;
+		}
+
+		if (par_override || t->speed_hz || t->bits_per_word) {
+			par_override = 1;
+			status = ocspi_setup_transfer(spi, t);
+			if (status < 0)
+				break;
+			if (!t->speed_hz && !t->bits_per_word)
+				par_override = 0;
+		}
+
+		if (!cs_active) {
+			ocspi_set_cs(ocspi, (1 << spi->chip_select));
+			cs_active = 1;
+		}
+
+		if (t->len)
+			m->actual_length += ocspi_write_read(spi, t);
+
+		if (t->delay_usecs)
+			udelay(t->delay_usecs);
+
+		if (t->cs_change) {
 			ocspi_set_cs(ocspi, 0);
-
-		m->status = status;
-		m->complete(m->context);
-
-		spin_lock_irq(&ocspi->lock);
+			cs_active = 0;
+		}
 	}
 
-	spin_unlock_irq(&ocspi->lock);
+msg_done:
+	if (cs_active)
+		ocspi_set_cs(ocspi, 0);
+
+	m->status = status;
+	spi_finalize_current_message(master);
+
+	return 0;
 }
 
 static int ocspi_reset(struct ocspi *ocspi)
@@ -359,72 +368,6 @@ static int ocspi_setup(struct spi_device *spi)
 	return 0;
 }
 
-/*
- * The transfer function enqueues a message for sending to the
- * spi_device.  May be called at any time and should thus not touch
- * registers.
- */
-static int ocspi_transfer(struct spi_device *spi, struct spi_message *m)
-{
-	struct ocspi *ocspi;
-	struct spi_transfer *t = NULL;
-	unsigned long flags;
-
-	m->actual_length = 0;
-	m->status = 0;
-
-	/* reject invalid messages and transfers */
-	if (list_empty(&m->transfers) || !m->complete) {
-		return -EINVAL;
-	}
-
-	ocspi = spi_master_get_devdata(spi->master);
-
-	list_for_each_entry(t, &m->transfers, transfer_list) {
-		unsigned int bits_per_word = spi->bits_per_word;
-
-		if (t->tx_buf == NULL && t->rx_buf == NULL && t->len) {
-			dev_err(&spi->dev,
-				"message rejected : "
-				"invalid transfer data buffers\n");
-			goto msg_rejected;
-		}
-
-		if ((t != NULL) && t->bits_per_word)
-			bits_per_word = t->bits_per_word;
-
-		if (bits_per_word != 8) {
-			dev_err(&spi->dev,
-				"message rejected : "
-				"invalid transfer bits_per_word (%d bits)\n",
-				bits_per_word);
-			goto msg_rejected;
-		}
-
-		if (t->speed_hz && t->speed_hz < ocspi->min_speed) {
-			dev_err(&spi->dev,
-				"message rejected : "
-				"device min speed (%d Hz) exceeds "
-				"required transfer speed (%d Hz)\n",
-				ocspi->min_speed, t->speed_hz);
-			goto msg_rejected;
-		}
-	}
-
-	spin_lock_irqsave(&ocspi->lock, flags);
-	list_add_tail(&m->queue, &ocspi->msg_queue);
-	queue_work(ocspi_wq, &ocspi->work);
-	spin_unlock_irqrestore(&ocspi->lock, flags);
-
-	return 0;
-msg_rejected:
-	/* Message rejected and not queued */
-	m->status = -EINVAL;
-	if (m->complete)
-		m->complete(m->context);
-	return -EINVAL;
-}
-
 static int ocspi_probe(struct platform_device *pdev)
 {
 	struct spi_master *master;
@@ -450,7 +393,7 @@ static int ocspi_probe(struct platform_device *pdev)
 	master->mode_bits = SPI_MODE_3;
 
 	master->setup = ocspi_setup;
-	master->transfer = ocspi_transfer;
+	master->transfer_one_message = ocspi_transfer_one_message;
 	master->num_chipselect = OCSPI_NUM_CHIPSELECTS;
 #ifdef CONFIG_OF
 	master->dev.of_node = pdev->dev.of_node;
@@ -478,11 +421,6 @@ static int ocspi_probe(struct platform_device *pdev)
 	spi->base = devm_ioremap_nocache(&pdev->dev, r->start,
 					 resource_size(r));
 
-	INIT_WORK(&spi->work, ocspi_work);
-
-	spin_lock_init(&spi->lock);
-	INIT_LIST_HEAD(&spi->msg_queue);
-
 	ocspi_reset(spi);
 
 	status = spi_register_master(master);
@@ -503,8 +441,6 @@ static int ocspi_remove(struct platform_device *pdev)
 
 	master = dev_get_drvdata(&pdev->dev);
 	spi = spi_master_get_devdata(master);
-
-	cancel_work_sync(&spi->work);
 
 	spi_unregister_master(master);
 
@@ -533,30 +469,13 @@ static struct platform_driver ocspi_driver = {
 
 static int __init ocspi_init(void)
 {
-	int status;
-
-	ocspi_wq = create_singlethread_workqueue(
-				ocspi_driver.driver.name);
-
-	if (ocspi_wq == NULL)
-		return -ENOMEM;
-
-	status = platform_driver_register(&ocspi_driver);
-
-	if (status) {
-		destroy_workqueue(ocspi_wq);
-	};
-
-	return status;
+	return platform_driver_register(&ocspi_driver);
 }
 module_init(ocspi_init);
 
 static void __exit ocspi_exit(void)
 {
-	flush_workqueue(ocspi_wq);
 	platform_driver_unregister(&ocspi_driver);
-
-	destroy_workqueue(ocspi_wq);
 }
 module_exit(ocspi_exit);
 
