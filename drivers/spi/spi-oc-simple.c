@@ -1,10 +1,10 @@
 /*
- * spi_opencores.c -- OpenCores SPI controller driver
+ * spi-oc-simple.c -- OpenCores SPI controller driver
  *
  * Author: Jonas Bonn <jonas@southpole.se>
  * Copyright (C) 2010 South Pole AB
  *
- * Derived from orion_spi.c
+ * Derived from spi-orion.c
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
