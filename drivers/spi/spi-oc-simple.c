@@ -399,7 +399,7 @@ static int ocspi_probe(struct platform_device *pdev)
 	master->dev.of_node = pdev->dev.of_node;
 #endif
 
-	dev_set_drvdata(&pdev->dev, master);
+	platform_set_drvdata(pdev, master);
 
 	spi = spi_master_get_devdata(master);
 	spi->master = master;
@@ -439,7 +439,7 @@ static int ocspi_remove(struct platform_device *pdev)
 	struct spi_master *master;
 	struct ocspi *spi;
 
-	master = dev_get_drvdata(&pdev->dev);
+	master = platform_get_drvdata(pdev);
 	spi = spi_master_get_devdata(master);
 
 	spi_unregister_master(master);
