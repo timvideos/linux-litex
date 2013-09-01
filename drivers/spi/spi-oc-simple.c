@@ -24,7 +24,7 @@
 
 #define DRIVER_NAME			"oc_spi_simple"
 
-#define OCSPI_NUM_CHIPSELECTS		8 
+#define OCSPI_NUM_CHIPSELECTS		8
 #define OCSPI_WAIT_RDY_MAX_LOOP		2000 /* in usec */
 
 #define OCSPI_REG_SPCR			0x0
@@ -83,8 +83,9 @@ ocspi_set_transfer_size(struct ocspi *ocspi, unsigned int size)
 		return -EINVAL;
 	}
 
-	/* Nothing to do */
-	/* If we were using interrupts we would probably set the 
+	/*
+	 * Nothing to do
+	 * If we were using interrupts we would probably set the
 	 * ICNT bits of the SPER register here... but we're not!
 	 */
 
@@ -128,7 +129,7 @@ static inline void
 ocspi_set_mode_bits(u8* spcr, int mode)
 {
 	if (mode & SPI_CPHA) {
-		*spcr |= OCSPI_SPCR_CPHA;	
+		*spcr |= OCSPI_SPCR_CPHA;
 	} else {
 		*spcr &= ~OCSPI_SPCR_CPHA;
 	}
@@ -169,7 +170,6 @@ ocspi_setup_transfer(struct spi_device *spi, struct spi_transfer *t)
 
 	ocspi_write(ocspi, OCSPI_REG_SPCR, spcr);
 	ocspi_write(ocspi, OCSPI_REG_SPER, sper);
-
 
 	return ocspi_set_transfer_size(ocspi, bits_per_word);
 }
@@ -227,7 +227,7 @@ ocspi_write_read(struct spi_device *spi,
 		if (ocspi_wait_till_ready(ocspi) < 0) {
 			dev_err(&spi->dev, "TXS timed out\n");
 			return -1;
-		}		
+		}
 
 		if (rx_buf && *rx_buf) {
 			while (!ocspi_read(ocspi, OCSPI_REG_SPSR) & OCSPI_SPSR_RDEMPTY) {
@@ -308,38 +308,38 @@ ocspi_write_read_16bit(struct spi_device *spi,
 static unsigned int
 ocspi_write_read(struct spi_device *spi, struct spi_transfer *xfer)
 {
-        struct ocspi *ocspi;
-        unsigned int count;
-        int word_len;
+	struct ocspi *ocspi;
+	unsigned int count;
+	int word_len;
 
-        ocspi = spi_master_get_devdata(spi->master);
-        word_len = spi->bits_per_word;
-        count = xfer->len;
+	ocspi = spi_master_get_devdata(spi->master);
+	word_len = spi->bits_per_word;
+	count = xfer->len;
 
 //	printk("Writing transfer: length = %d\n", count);
 
-        if (word_len == 8) {
-                const u8 *tx = xfer->tx_buf;
-                u8 *rx = xfer->rx_buf;
+	if (word_len == 8) {
+		const u8 *tx = xfer->tx_buf;
+		u8 *rx = xfer->rx_buf;
 
-                do {
-                        if (ocspi_write_read_8bit(spi, &tx, &rx) < 0)
-                                goto out;
-                        count--;
-                } while (count);
-        } else if (word_len == 16) {
-                const u8 *tx = xfer->tx_buf;
-                u8 *rx = xfer->rx_buf;
+		do {
+			if (ocspi_write_read_8bit(spi, &tx, &rx) < 0)
+				goto out;
+			count--;
+		} while (count);
+	} else if (word_len == 16) {
+		const u8 *tx = xfer->tx_buf;
+		u8 *rx = xfer->rx_buf;
 
-                do {
-                        if (ocspi_write_read_16bit(spi, &tx, &rx) < 0)
-                                goto out;
-                        count -= 2;
-                } while (count);
-        }
+		do {
+			if (ocspi_write_read_16bit(spi, &tx, &rx) < 0)
+				goto out;
+			count -= 2;
+		} while (count);
+	}
 
 out:
-        return xfer->len - count;
+	return xfer->len - count;
 }
 
 #if 0
@@ -468,7 +468,6 @@ static int ocspi_reset(struct ocspi *ocspi)
  * this controller.  This function may be called at any time and should
  * not touch registers.
  */
-
 static int ocspi_setup(struct spi_device *spi)
 {
 	struct ocspi *ocspi;
@@ -496,7 +495,6 @@ static int ocspi_setup(struct spi_device *spi)
  * spi_device.  May be called at any time and should thus not touch
  * registers.
  */
-
 static int ocspi_transfer(struct spi_device *spi, struct spi_message *m)
 {
 	struct ocspi *ocspi;
@@ -523,25 +521,26 @@ static int ocspi_transfer(struct spi_device *spi, struct spi_message *m)
 			goto msg_rejected;
 		}
 
-                if ((t != NULL) && t->bits_per_word)
-                        bits_per_word = t->bits_per_word;
+		if ((t != NULL) && t->bits_per_word)
+			bits_per_word = t->bits_per_word;
 
-                if ((bits_per_word != 8) && (bits_per_word != 16)) {
-                        dev_err(&spi->dev,
-                                "message rejected : "
-                                "invalid transfer bits_per_word (%d bits)\n",
-                                bits_per_word);
-                        goto msg_rejected;
-                }
+		if ((bits_per_word != 8) && (bits_per_word != 16)) {
+			dev_err(&spi->dev,
+				"message rejected : "
+				"invalid transfer bits_per_word (%d bits)\n",
+				bits_per_word);
+			goto msg_rejected;
+		}
 
-                /*make sure buffer length is even when working in 16 bit mode*/
-                if ((t != NULL) && (t->bits_per_word == 16) && (t->len & 1)) {
-                        dev_err(&spi->dev,
-                                "message rejected : "
-                                "odd data length (%d) while in 16 bit mode\n",
-                                t->len);
-                        goto msg_rejected;
-                }
+		/* make sure buffer length is even when working in 16 bit
+		   mode */
+		if ((t != NULL) && (t->bits_per_word == 16) && (t->len & 1)) {
+			dev_err(&spi->dev,
+				"message rejected : "
+				"odd data length (%d) while in 16 bit mode\n",
+				t->len);
+			goto msg_rejected;
+		}
 
 		if (t->speed_hz && t->speed_hz < ocspi->min_speed) {
 			dev_err(&spi->dev,
@@ -585,8 +584,9 @@ static int ocspi_probe(struct platform_device *pdev)
 
 	master->bus_num = -1;
 
-	/* we support only mode 0 for now, and no options... 
-	 * but we can support CPHA setting -- to be implemented 
+	/*
+	 * we support only mode 0 for now, and no options...
+	 * but we can support CPHA setting -- to be implemented
 	 */
 	master->mode_bits = SPI_MODE_3;
 
@@ -616,7 +616,8 @@ static int ocspi_probe(struct platform_device *pdev)
 		status = -EBUSY;
 		goto out;
 	}
-	spi->base = devm_ioremap_nocache(&pdev->dev, r->start, resource_size(r));
+	spi->base = devm_ioremap_nocache(&pdev->dev, r->start,
+					 resource_size(r));
 
 	INIT_WORK(&spi->work, ocspi_work);
 
@@ -652,10 +653,10 @@ static int ocspi_remove(struct platform_device *pdev)
 }
 
 static struct of_device_id ocspi_match[] = {
-        {
-                .compatible = "opencores,spi-simple",
-        },
-        {},
+	{
+		.compatible = "opencores,spi-simple",
+	},
+	{},
 };
 MODULE_DEVICE_TABLE(of, ocspi_match);
 
