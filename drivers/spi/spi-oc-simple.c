@@ -151,7 +151,6 @@ ocspi_setup_transfer(struct spi_device *spi, struct spi_transfer *t)
 	struct ocspi *ocspi;
 	unsigned int speed = spi->max_speed_hz;
 	unsigned int bits_per_word = spi->bits_per_word;
-	int rc;
 	u8 spcr, sper;
 
 	ocspi = spi_master_get_devdata(spi->master);
@@ -202,7 +201,6 @@ ocspi_write_read_8bit(struct spi_device *spi,
 			  const u8 **tx_buf, u8 **rx_buf)
 {
 	struct ocspi *ocspi;
-	u8 v;
 
 	ocspi = spi_master_get_devdata(spi->master);
 
