@@ -449,7 +449,7 @@ msg_done:
 	spin_unlock_irq(&ocspi->lock);
 }
 
-static int __init ocspi_reset(struct ocspi *ocspi)
+static int ocspi_reset(struct ocspi *ocspi)
 {
 	/* Verify that the CS is deasserted */
 	ocspi_set_cs(ocspi, 0);
@@ -566,7 +566,7 @@ msg_rejected:
 	return -EINVAL;
 }
 
-static int __devinit ocspi_probe(struct platform_device *pdev)
+static int ocspi_probe(struct platform_device *pdev)
 {
 	struct spi_master *master;
 	struct ocspi *spi;
@@ -635,7 +635,7 @@ out:
 	return status;
 }
 
-static int __devexit ocspi_remove(struct platform_device *pdev)
+static int ocspi_remove(struct platform_device *pdev)
 {
 	struct spi_master *master;
 	struct ocspi *spi;
@@ -662,7 +662,7 @@ MODULE_ALIAS("platform:" DRIVER_NAME);
 
 static struct platform_driver ocspi_driver = {
 	.probe = ocspi_probe,
-	.remove = __devexit_p(ocspi_remove),
+	.remove = ocspi_remove,
 /*	.suspend = ocspi_suspend,
 	.resume = ocspi_resume,	
 */
