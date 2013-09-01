@@ -192,55 +192,11 @@ ocspi_wait_till_ready(struct ocspi *ocspi)
 			return 1;
 		else
 			usleep_range(1,1);
-			//udelay(1);
 	}
 
 	return -1;
 }
-#if 0
-static inline int
-ocspi_write_read(struct spi_device *spi,
-			  const u8 **tx_buf, u8 **rx_buf, int length)
-{
-	struct ocspi *ocspi;
-	u8 v;
 
-	ocspi = spi_master_get_devdata(spi->master);
-
-	/* If there's any garbage left over in the read buffer, delete it */
-	while (!ocspi_read(ocspi, OCSPI_REG_SPSR) & OCSPI_SPSR_RDEMPTY) {
-		ocspi_read(ocspi, OCSPI_REG_SPDR);
-	}
-
-	count = length;
-
-	/* Write four bytes at a time and read them back */
-	do {
-		int i;
-		i = 0
-		while (count > 0 && i != 4) {
-			ocspi_write(ocspi, OCSPI_REG_SPDR, *(*tx_buf)++);
-			count--;
-			i++;
-		}
-
-		if (ocspi_wait_till_ready(ocspi) < 0) {
-			dev_err(&spi->dev, "TXS timed out\n");
-			return -1;
-		}
-
-		if (rx_buf && *rx_buf) {
-			while (!ocspi_read(ocspi, OCSPI_REG_SPSR) & OCSPI_SPSR_RDEMPTY) {
-				*(*rx_buf)++ = ocspi_read(ocspi, OCSPI_REG_SPDR);
-		} else {
-			while (!ocspi_read(ocspi, OCSPI_REG_SPSR) & OCSPI_SPSR_RDEMPTY) {
-				ocspi_read(ocspi, OCSPI_REG_SPDR);
-		}
-	} while (count > 0);
-
-	return length;
-}
-#endif
 static inline int
 ocspi_write_read_8bit(struct spi_device *spi,
 			  const u8 **tx_buf, u8 **rx_buf)
@@ -270,41 +226,6 @@ ocspi_write_read_8bit(struct spi_device *spi,
 	return 1;
 }
 
-static inline int
-ocspi_write_read_16bit(struct spi_device *spi,
-			   const u8 **tx_buf, u8 **rx_buf)
-{
-#if 0
-	u8 __iomem *datareg;
-	struct ocspi *ocspi;
-
-	ocspi = spi_master_get_devdata(spi->master);
-	datareg = spi_reg(ocspi, OCSPI_REG_SPDR);
-
-	if (tx_buf && *tx_buf) {
-		iowrite8(*(*tx_buf)++, datareg);
-		iowrite8(*(*tx_buf)++, datareg);
-	} else {
-		iowrite8(0, datareg);
-		iowrite8(0, datareg);
-	}
-
-	if (ocspi_wait_till_ready(ocspi) < 0) {
-		dev_err(&spi->dev, "TXS timed out\n");
-		return -1;
-	}
-
-	if (rx_buf && *rx_buf) {
-		*(*rx_buf)++ = ioread8(datareg);
-		*(*rx_buf)++ = ioread8(datareg);
-	} else {
-		ioread8(datareg);
-		ioread8(datareg);
-	}
-#endif
-	return 1;
-}
-
 static unsigned int
 ocspi_write_read(struct spi_device *spi, struct spi_transfer *xfer)
 {
@@ -316,8 +237,6 @@ ocspi_write_read(struct spi_device *spi, struct spi_transfer *xfer)
 	word_len = spi->bits_per_word;
 	count = xfer->len;
 
-//	printk("Writing transfer: length = %d\n", count);
-
 	if (word_len == 8) {
 		const u8 *tx = xfer->tx_buf;
 		u8 *rx = xfer->rx_buf;
@@ -327,59 +246,11 @@ ocspi_write_read(struct spi_device *spi, struct spi_transfer *xfer)
 				goto out;
 			count--;
 		} while (count);
-	} else if (word_len == 16) {
-		const u8 *tx = xfer->tx_buf;
-		u8 *rx = xfer->rx_buf;
-
-		do {
-			if (ocspi_write_read_16bit(spi, &tx, &rx) < 0)
-				goto out;
-			count -= 2;
-		} while (count);
 	}
 
 out:
 	return xfer->len - count;
 }
-
-#if 0
-static irqreturn_t
-ocspi_interrupt(int irq, void *dev_id)
-{
-	/* Disable interrupt */
-	ocspi_clrbits(ocspi, OCSPI_REG_CTRL, OCSPI_CTRL_IE);
-
-	return IRQ_WAKE_THREAD;
-}
-
-static irqreturn_t
-ocspi_interrupt_thread(int irq, void *dev_id)
-{
-	struct ocspi *ocspi = (struct ocspi*) dev_id;
-
-	if (current_xfer) {
-		current_xfer->rx_buf 
-
-
-	}
-
-	spin_lock_irq(&ocspi->lock);
-	if (list_empty(&ocspi->msq_queue)) {
-		/* No more messages to send */
-		spin_unlock_irq(&ocspi->lock);
-		return IRQ_HANDLED;
-	}
-
-	msg = container_of(ocspi->msq_queue.next, struct spi_message, queue);
-
-	
-
-	/* Reenable interrupt */
-	ocspi_setbits(ocspi, OCSPI_REG_CTRL, OCSPI_CTRL_IE);
-
-	return IRQ_HANDLED;
-}
-#endif
 
 static void ocspi_work(struct work_struct *work)
 {
@@ -524,21 +395,11 @@ static int ocspi_transfer(struct spi_device *spi, struct spi_message *m)
 		if ((t != NULL) && t->bits_per_word)
 			bits_per_word = t->bits_per_word;
 
-		if ((bits_per_word != 8) && (bits_per_word != 16)) {
+		if (bits_per_word != 8) {
 			dev_err(&spi->dev,
 				"message rejected : "
 				"invalid transfer bits_per_word (%d bits)\n",
 				bits_per_word);
-			goto msg_rejected;
-		}
-
-		/* make sure buffer length is even when working in 16 bit
-		   mode */
-		if ((t != NULL) && (t->bits_per_word == 16) && (t->len & 1)) {
-			dev_err(&spi->dev,
-				"message rejected : "
-				"odd data length (%d) while in 16 bit mode\n",
-				t->len);
 			goto msg_rejected;
 		}
 
@@ -665,9 +526,6 @@ MODULE_ALIAS("platform:" DRIVER_NAME);
 static struct platform_driver ocspi_driver = {
 	.probe = ocspi_probe,
 	.remove = ocspi_remove,
-/*	.suspend = ocspi_suspend,
-	.resume = ocspi_resume,	
-*/
 	.driver = {
 		.name	= DRIVER_NAME,
 		.owner	= THIS_MODULE,
