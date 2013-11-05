@@ -22,6 +22,7 @@
 #include <linux/of_gpio.h>
 #include <linux/io.h>
 #include <linux/gpio.h>
+#include <linux/module.h>
 #include <linux/slab.h>
 
 struct jbgpio_instance {
