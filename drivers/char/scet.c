@@ -252,7 +252,7 @@ long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	return 0;
 }
 
-static int __devinit scet_probe(struct platform_device *pdev)
+static int scet_probe(struct platform_device *pdev)
 {
 
 	int retval = 0;
@@ -295,7 +295,7 @@ out:
 	return retval;
 }
 
-static int __devexit scet_remove(struct platform_device *dev)
+static int scet_remove(struct platform_device *dev)
 {
 	/* Nothing to do...
 	 * 'devres' device management takes cares of freeing
@@ -317,7 +317,7 @@ MODULE_ALIAS("platform:" DEVICE_NAME);
 
 static struct platform_driver scet_driver = {
 	.probe = scet_probe,
-	.remove = __devexit_p(scet_remove),
+	.remove = scet_remove,
 	.driver = {
 		   .name = DEVICE_NAME,
 		   .owner = THIS_MODULE,
