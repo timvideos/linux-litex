@@ -229,9 +229,8 @@ static void in_packet(struct ohs900 *ohs900,
 {
 	u8 len;
 	len = ep->maxpacket;
-	ep->length =
-	    min((int)len,
-		(int)(urb->transfer_buffer_length - urb->actual_length));
+	ep->length = min_t(int, len,
+			   urb->transfer_buffer_length - urb->actual_length);
 
 	ohs900_write(ohs900, OHS900_RXFIFOCONTROLREG, OHS900_FIFO_FORCE_EMPTY);
 	ohs900_write(ohs900, OHS900_TXTRANSTYPEREG, OHS900_IN);
@@ -253,8 +252,8 @@ static void out_packet(struct ohs900 *ohs900,
 	buf = urb->transfer_buffer + urb->actual_length;
 	prefetch(buf);
 
-	len = min((int)ep->maxpacket,
-		  urb->transfer_buffer_length - urb->actual_length);
+	len = min_t(int, ep->maxpacket,
+		    urb->transfer_buffer_length - urb->actual_length);
 
 	ohs900_write(ohs900, OHS900_TXFIFOCONTROLREG, OHS900_FIFO_FORCE_EMPTY);
 	if (!(control & OHS900_HCTLMASK_ISO_EN)
