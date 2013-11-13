@@ -1791,10 +1791,10 @@ struct platform_driver ohs900h_driver = {
 	.suspend = ohs900h_suspend,
 	.resume = ohs900h_resume,
 	.driver = {
-		   .name = (char *)hcd_name,
+		   .name = hcd_name,
 		   .owner = THIS_MODULE,
 		   .of_match_table = ocores_ohs900_match,
-		   },
+	},
 };
 
 /*-------------------------------------------------------------------------*/
