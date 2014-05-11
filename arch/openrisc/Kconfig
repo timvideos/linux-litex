@@ -105,6 +105,20 @@ config OPENRISC_HAVE_INST_DIV
 	  Select this if your implementation has a hardware divide instruction
 endmenu
 
+config NR_CPUS
+	int "Maximum number of CPUs (2-32)"
+	range 2 32
+	depends on SMP
+	default "2"
+
+config SMP
+	bool "Symmetric Multi-Processing support"
+	help
+	  This enables support for systems with more than one CPU. If you have
+	  a system with only one CPU, say N. If you have a system with more
+	  than one CPU, say Y.
+
+	  If you don't know what to do here, say N.
 
 source kernel/Kconfig.hz
 source kernel/Kconfig.preempt
