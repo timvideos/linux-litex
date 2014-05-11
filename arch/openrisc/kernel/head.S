@@ -70,13 +70,36 @@
 #define EMERGENCY_PRINT_STORE_GPR9	l.sw    0x34(r0),r9
 #define EMERGENCY_PRINT_LOAD_GPR9	l.lwz   r9,0x34(r0)
 
+/* TODO: (re)move */
+#define SPR_ISR0        (SPRGROUP_SYS + 21)
+#define SPR_ISR1        (SPRGROUP_SYS + 22)
+#define SPR_ISR2        (SPRGROUP_SYS + 23)
+#define SPR_ISR3        (SPRGROUP_SYS + 24)
+#define SPR_ISR4        (SPRGROUP_SYS + 25)
+#define SPR_ISR5        (SPRGROUP_SYS + 26)
+#define SPR_ISR6        (SPRGROUP_SYS + 27)
+#define SPR_ISR7        (SPRGROUP_SYS + 28)
 
 /*
  * TLB miss handlers temorary stores
  */
-#define EXCEPTION_STORE_GPR9		l.sw    0x10(r0),r9
-#define EXCEPTION_LOAD_GPR9		l.lwz   r9,0x10(r0)
+#if 1/*CONFIG_HAVE_SHADOW_GPRS*/
+#define EXCEPTION_STORE_GPR2		l.mtspr	r0,r2,SPR_ISR0
+#define EXCEPTION_LOAD_GPR2		l.mfspr r2,r0,SPR_ISR0
 
+#define EXCEPTION_STORE_GPR3		l.mtspr	r0,r3,SPR_ISR1
+#define EXCEPTION_LOAD_GPR3		l.mfspr r3,r0,SPR_ISR1
+
+#define EXCEPTION_STORE_GPR4		l.mtspr	r0,r4,SPR_ISR2
+#define EXCEPTION_LOAD_GPR4		l.mfspr r4,r0,SPR_ISR2
+
+#define EXCEPTION_STORE_GPR5		l.mtspr	r0,r5,SPR_ISR3
+#define EXCEPTION_LOAD_GPR5		l.mfspr r5,r0,SPR_ISR3
+
+#define EXCEPTION_STORE_GPR6		l.mtspr	r0,r6,SPR_ISR4
+#define EXCEPTION_LOAD_GPR6		l.mfspr r6,r0,SPR_ISR4
+
+#else /* !CONFIG_HAVE_SHADOW_GPRS */
 #define EXCEPTION_STORE_GPR2		l.sw    0x64(r0),r2
 #define EXCEPTION_LOAD_GPR2		l.lwz   r2,0x64(r0)
 
@@ -92,11 +115,23 @@
 #define EXCEPTION_STORE_GPR6		l.sw    0x74(r0),r6
 #define EXCEPTION_LOAD_GPR6		l.lwz   r6,0x74(r0)
 
+#endif
 
 /*
  * EXCEPTION_HANDLE temporary stores
  */
 
+#if 1/*CONFIG_HAVE_SHADOW_GPRS*/
+#define EXCEPTION_T_STORE_GPR30		l.mtspr	r0,r30,SPR_ISR5
+#define EXCEPTION_T_LOAD_GPR30(reg)	l.mfspr reg,r0,SPR_ISR5
+
+#define EXCEPTION_T_STORE_GPR10		l.mtspr	r0,r10,SPR_ISR6
+#define EXCEPTION_T_LOAD_GPR10(reg)	l.mfspr reg,r0,SPR_ISR6
+
+#define EXCEPTION_T_STORE_SP		l.mtspr	r0,r1,SPR_ISR7
+#define EXCEPTION_T_LOAD_SP(reg)	l.mfspr reg,r0,SPR_ISR7
+
+#else /* !CONFIG_HAVE_SHADOW_GPRS */
 #define EXCEPTION_T_STORE_GPR30		l.sw    0x78(r0),r30
 #define EXCEPTION_T_LOAD_GPR30(reg)	l.lwz   reg,0x78(r0)
 
@@ -105,13 +140,7 @@
 
 #define EXCEPTION_T_STORE_SP		l.sw	0x80(r0),r1
 #define EXCEPTION_T_LOAD_SP(reg)	l.lwz   reg,0x80(r0)
-
-/*
- * For UNHANLDED_EXCEPTION
- */
-
-#define EXCEPTION_T_STORE_GPR31		l.sw    0x84(r0),r31
-#define EXCEPTION_T_LOAD_GPR31(reg)	l.lwz   reg,0x84(r0)
+#endif
 
 /* =========================================================[ macros ]=== */
 
@@ -226,7 +255,7 @@
  *
  */
 #define UNHANDLED_EXCEPTION(handler)				\
-	EXCEPTION_T_STORE_GPR31					;\
+	EXCEPTION_T_STORE_GPR30					;\
 	EXCEPTION_T_STORE_GPR10					;\
 	EXCEPTION_T_STORE_SP					;\
 	/* temporary store r3, r9 into r1, r10 */		;\
@@ -255,35 +284,35 @@
 	/* r1: KSP, r10: current, r31: __pa(KSP) */		;\
 	/* r12:	temp, syscall indicator, r13 temp */		;\
 	l.addi  r1,r1,-(INT_FRAME_SIZE)				;\
-	/* r1 is KSP, r31 is __pa(KSP) */			;\
-	tophys  (r31,r1)					;\
-	l.sw    PT_GPR12(r31),r12					;\
+	/* r1 is KSP, r30 is __pa(KSP) */			;\
+	tophys  (r30,r1)					;\
+	l.sw    PT_GPR12(r30),r12					;\
 	l.mfspr r12,r0,SPR_EPCR_BASE				;\
-	l.sw    PT_PC(r31),r12					;\
+	l.sw    PT_PC(r30),r12					;\
 	l.mfspr r12,r0,SPR_ESR_BASE				;\
-	l.sw    PT_SR(r31),r12					;\
+	l.sw    PT_SR(r30),r12					;\
 	/* save r31 */						;\
-	EXCEPTION_T_LOAD_GPR31(r12)				;\
-	l.sw	PT_GPR31(r31),r12					;\
+	EXCEPTION_T_LOAD_GPR30(r12)				;\
+	l.sw	PT_GPR30(r30),r12					;\
 	/* save r10 as was prior to exception */		;\
 	EXCEPTION_T_LOAD_GPR10(r12)				;\
-	l.sw	PT_GPR10(r31),r12					;\
+	l.sw	PT_GPR10(r30),r12					;\
 	/* save PT_SP as was prior to exception */			;\
 	EXCEPTION_T_LOAD_SP(r12)				;\
-	l.sw	PT_SP(r31),r12					;\
-	l.sw    PT_GPR13(r31),r13					;\
+	l.sw	PT_SP(r30),r12					;\
+	l.sw    PT_GPR13(r30),r13					;\
 	/* --> */						;\
 	/* save exception r4, set r4 = EA */			;\
-	l.sw	PT_GPR4(r31),r4					;\
+	l.sw	PT_GPR4(r30),r4					;\
 	l.mfspr r4,r0,SPR_EEAR_BASE				;\
 	/* r12 == 1 if we come from syscall */			;\
 	CLEAR_GPR(r12)						;\
 	/* ----- play a MMU trick ----- */			;\
-	l.ori	r31,r0,(EXCEPTION_SR)				;\
-	l.mtspr	r0,r31,SPR_ESR_BASE				;\
+	l.ori	r30,r0,(EXCEPTION_SR)				;\
+	l.mtspr	r0,r30,SPR_ESR_BASE				;\
 	/* r31:	EA address of handler */			;\
-	LOAD_SYMBOL_2_GPR(r31,handler)				;\
-	l.mtspr r0,r31,SPR_EPCR_BASE				;\
+	LOAD_SYMBOL_2_GPR(r30,handler)				;\
+	l.mtspr r0,r30,SPR_EPCR_BASE				;\
 	l.rfe
 
 /* =====================================================[ exceptions] === */
