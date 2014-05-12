@@ -184,7 +184,7 @@ copy_thread(unsigned long clone_flags, unsigned long usp,
 		 * This makes the source r7 in the kernel registers.
 		 */
 		if (clone_flags & CLONE_SETTLS)
-			userregs->gpr[10] = kregs->gpr[7];
+			userregs->gpr[10] = userregs->gpr[7];
 
 		userregs->gpr[11] = 0;	/* Result from fork() */
 
