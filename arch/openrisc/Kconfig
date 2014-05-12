@@ -103,6 +103,13 @@ config OPENRISC_HAVE_INST_DIV
 	default y
 	help
 	  Select this if your implementation has a hardware divide instruction
+
+config OPENRISC_HAVE_INST_LWA_SWA
+	bool "Have instruction l.lwa and l.swa"
+	help
+	  Select this if your implementation have l.lwa and l.swa atomic
+	  instructions.
+
 endmenu
 
 
