@@ -103,6 +103,12 @@ config OPENRISC_HAVE_INST_DIV
 	default y
 	help
 	  Select this if your implementation has a hardware divide instruction
+
+config OPENRISC_HAVE_INST_LWA_SWA
+	bool "Have instruction l.lwa and l.swa"
+	help
+	  Select this if your implementation have l.lwa and l.swa atomic
+	  instructions.
 endmenu
 
 config NR_CPUS
@@ -113,6 +119,7 @@ config NR_CPUS
 
 config SMP
 	bool "Symmetric Multi-Processing support"
+	depends on OPENRISC_HAVE_INST_LWA_SWA
 	help
 	  This enables support for systems with more than one CPU. If you have
 	  a system with only one CPU, say N. If you have a system with more
