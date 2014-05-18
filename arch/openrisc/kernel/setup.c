@@ -290,6 +290,10 @@ void __init setup_arch(char **cmdline_p)
 
 	setup_cpuinfo();
 
+#ifdef CONFIG_SMP
+	smp_init_cpus();
+#endif
+
 	/* process 1's initial memory region is the kernel code/data */
 	init_mm.start_code = (unsigned long)_stext;
 	init_mm.end_code = (unsigned long)_etext;

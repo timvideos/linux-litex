@@ -513,6 +513,12 @@ _start:
 	CLEAR_GPR(r30)
 	CLEAR_GPR(r31)
 
+#ifdef CONFIG_SMP
+	l.mfspr	r25,r0,SPR_COREID
+	l.sfeq	r25,r0
+	l.bnf	secondary_wait
+	 l.nop
+#endif
 	/*
 	 * set up initial ksp and current
 	 */
@@ -663,6 +669,58 @@ _flush_tlb:
 
 	l.jr	r9
 	 l.nop
+
+#ifdef CONFIG_SMP
+secondary_wait:
+	l.mfspr	r25,r0,SPR_COREID
+	l.movhi	r3,hi(secondary_release)
+	l.ori	r3,r3,lo(secondary_release)
+	tophys(r4, r3)
+	l.lwz	r3,0(r4)
+	l.sfeq	r25,r3
+	l.bnf	secondary_wait
+	 l.nop
+	/* fall through to secondary_init */
+
+secondary_init:
+	/*
+	 * set up initial ksp and current
+	 */
+	LOAD_SYMBOL_2_GPR(r10, secondary_thread_info)
+	tophys	(r30,r10)
+	l.lwz	r10,0(r30)
+	l.addi	r1,r10,THREAD_SIZE
+	tophys	(r30,r10)
+	l.sw	TI_KSP(r30),r1
+
+	l.jal	_flush_tlb
+	 l.nop
+
+	/*
+	 * enable dmmu & immu
+	 */
+	l.mfspr	r30,r0,SPR_SR
+	l.movhi	r28,hi(SPR_SR_DME | SPR_SR_IME)
+	l.ori	r28,r28,lo(SPR_SR_DME | SPR_SR_IME)
+	l.or	r30,r30,r28
+	/*
+	 * This is a bit tricky, we need to switch over from physical addresses
+	 * to virtual addresses on the fly.
+	 * To do that, we first set up ESR with the IME and DME bits set.
+	 * Then EPCR is set to secondary_start and then a l.rfe is issued to
+	 * "jump" to that.
+	 */
+	l.mtspr	r0,r30,SPR_ESR_BASE
+	LOAD_SYMBOL_2_GPR(r30, secondary_start)
+	l.mtspr	r0,r30,SPR_EPCR_BASE
+	l.rfe
+
+secondary_start:
+	LOAD_SYMBOL_2_GPR(r30, secondary_start_kernel)
+	l.jr    r30
+	 l.nop
+
+#endif
 
 /* ========================================[ cache ]=== */
 
