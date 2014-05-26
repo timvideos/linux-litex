@@ -144,11 +144,20 @@
 
 /* =========================================================[ macros ]=== */
 
-
+#ifdef CONFIG_SMP
+#define GET_CURRENT_PGD(reg,t1)					\
+	LOAD_SYMBOL_2_GPR(reg,current_pgd)			;\
+	l.mfspr	t1,r0,SPR_COREID				;\
+	l.slli	t1,t1,2						;\
+	l.add	reg,reg,t1					;\
+	tophys  (t1,reg)					;\
+	l.lwz   reg,0(t1)
+#else
 #define GET_CURRENT_PGD(reg,t1)					\
 	LOAD_SYMBOL_2_GPR(reg,current_pgd)			;\
 	tophys  (t1,reg)					;\
 	l.lwz   reg,0(t1)
+#endif
 
 
 /*

@@ -149,7 +149,7 @@ void switch_mm(struct mm_struct *prev, struct mm_struct *next,
 	 * might be invalid at points where we still need to derefer
 	 * the pgd.
 	 */
-	current_pgd = next->pgd;
+	current_pgd[smp_processor_id()] = next->pgd;
 
 	/* We don't have context support implemented, so flush all
 	 * entries belonging to previous map
