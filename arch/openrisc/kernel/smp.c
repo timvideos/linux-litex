@@ -184,3 +184,35 @@ void arch_send_call_function_ipi_mask(const struct cpumask *mask)
 {
 	smp_cross_call(mask, IPI_CALL_FUNC);
 }
+
+/* TLB flush operations - Performed on each CPU*/
+static inline void ipi_flush_tlb_all(void *ignored)
+{
+	local_flush_tlb_all();
+}
+
+void flush_tlb_all(void)
+{
+	on_each_cpu(ipi_flush_tlb_all, NULL, 1);
+}
+
+/*
+ * FIXME: implement proper functionality instead of flush_tlb_all.
+ * *But*, as things currently stands, the local_tlb_flush_* functions will
+ * all boil down to local_tlb_flush_all anyway.
+ */
+void flush_tlb_mm(struct mm_struct *mm)
+{
+	on_each_cpu(ipi_flush_tlb_all, NULL, 1);
+}
+
+void flush_tlb_page(struct vm_area_struct *vma, unsigned long uaddr)
+{
+	on_each_cpu(ipi_flush_tlb_all, NULL, 1);
+}
+
+void flush_tlb_range(struct vm_area_struct *vma,
+		     unsigned long start, unsigned long end)
+{
+	on_each_cpu(ipi_flush_tlb_all, NULL, 1);
+}
