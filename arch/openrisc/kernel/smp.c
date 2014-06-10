@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2014 Stefan Kristiansson <stefan.kristiansson@saunalahti.fi>
  *
- * Loosely based on arm64 and arc implementations
+ * Based on arm64 and arc implementations
  * Copyright (C) 2013 ARM Ltd.
  * Copyright (C) 2004, 2007-2010, 2011-2012 Synopsys, Inc. (www.synopsys.com)
  *
@@ -12,9 +12,19 @@
 
 #include <linux/cpu.h>
 #include <linux/sched.h>
+#include <asm/mmu_context.h>
+#include <asm/tlbflush.h>
 
 volatile unsigned long secondary_release = -1;
 struct thread_info *secondary_thread_info;
+
+enum ipi_msg_type {
+	IPI_RESCHEDULE,
+	IPI_CALL_FUNC,
+	IPI_CALL_FUNC_SINGLE,
+	IPI_CPU_STOP,
+	IPI_TIMER,
+};
 
 static phys_addr_t cpu_release_addr[NR_CPUS];
 static DEFINE_SPINLOCK(boot_lock);
@@ -116,9 +126,42 @@ asmlinkage void secondary_start_kernel(void)
 	cpu_startup_entry(CPUHP_ONLINE);
 }
 
+void handle_IPI(int ipinr)
+{
+	unsigned int cpu = smp_processor_id();
+
+	switch (ipinr) {
+	case IPI_RESCHEDULE:
+		scheduler_ipi();
+		break;
+
+	case IPI_CALL_FUNC:
+		generic_smp_call_function_interrupt();
+		break;
+
+        case IPI_CALL_FUNC_SINGLE:
+		generic_smp_call_function_single_interrupt();
+		break;
+
+	default:
+		pr_crit("CPU%u: Unknown IPI message 0x%x\n", cpu, ipinr);
+		BUG();
+		break;
+	}
+}
+
+static void (*smp_cross_call)(const struct cpumask *, unsigned int);
+
+#ifdef CONFIG_GENERIC_CLOCKEVENTS_BROADCAST
+void tick_broadcast(const struct cpumask *mask)
+{
+	smp_cross_call(mask, IPI_TIMER);
+}
+#endif
+
 void smp_send_reschedule(int cpu)
 {
-	BUG(); /* SJK TODO */
+	smp_cross_call(cpumask_of(cpu), IPI_RESCHEDULE);
 }
 
 void smp_send_stop(void)
@@ -126,12 +169,17 @@ void smp_send_stop(void)
 	BUG(); /* SJK TODO */
 }
 
+void __init set_smp_cross_call(void (*fn)(const struct cpumask *, unsigned int))
+{
+	smp_cross_call = fn;
+}
+
 void arch_send_call_function_single_ipi(int cpu)
 {
-	BUG(); /* SJK TODO */
+	smp_cross_call(cpumask_of(cpu), IPI_CALL_FUNC_SINGLE);
 }
 
 void arch_send_call_function_ipi_mask(const struct cpumask *mask)
 {
-	BUG(); /* SJK TODO */
+	smp_cross_call(mask, IPI_CALL_FUNC);
 }
