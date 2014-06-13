@@ -159,6 +159,23 @@
 	l.lwz   reg,0(t1)
 #endif
 
+/* Load r10 from current_thread_info_set - clobbers r1 and r30 */
+#ifdef CONFIG_SMP
+#define GET_CURRENT_THREAD_INFO					\
+	LOAD_SYMBOL_2_GPR(r1,current_thread_info_set)		;\
+	tophys  (r30,r1)					;\
+	l.mfspr	r10,r0,SPR_COREID				;\
+	l.slli	r10,r10,2					;\
+	l.add	r30,r30,r10					;\
+	/* r10: current_thread_info  */				;\
+	l.lwz   r10,0(r30)
+#else
+#define GET_CURRENT_THREAD_INFO					\
+	LOAD_SYMBOL_2_GPR(r1,current_thread_info_set)		;\
+	tophys  (r30,r1)					;\
+	/* r10: current_thread_info  */				;\
+	l.lwz   r10,0(r30)
+#endif
 
 /*
  * DSCR: this is a common hook for handling exceptions. it will save
@@ -201,10 +218,7 @@
 	l.bnf   2f                            /* kernel_mode */	;\
 	 EXCEPTION_T_STORE_SP                 /* delay slot */	;\
 1: /* user_mode:   */						;\
-	LOAD_SYMBOL_2_GPR(r1,current_thread_info_set)		;\
-	tophys  (r30,r1)					;\
-	/* r10: current_thread_info  */				;\
-	l.lwz   r10,0(r30)					;\
+	GET_CURRENT_THREAD_INFO	 				;\
 	tophys  (r30,r10)					;\
 	l.lwz   r1,(TI_KSP)(r30)				;\
 	/* fall through */					;\
