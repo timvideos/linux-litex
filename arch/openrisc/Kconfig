@@ -25,6 +25,7 @@ config OPENRISC
 	select MODULES_USE_ELF_RELA
 	select HAVE_DEBUG_STACKOVERFLOW
 	select OR1K_PIC
+	select OMPIC if SMP
 
 config MMU
 	def_bool y

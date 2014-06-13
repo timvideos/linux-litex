@@ -29,6 +29,14 @@
 		};
 	};
 
+	ompic: ompic {
+		compatible = "ompic";
+		reg = <0x98000000 0x100>;
+		#interrupt-cells = <1>;
+		interrupt-controller;
+		interrupts = <1>;
+	};
+
 	/*
 	 * OR1K PIC is built into CPU and accessed via special purpose
 	 * registers.  It is not addressable and, hence, has no 'reg'
