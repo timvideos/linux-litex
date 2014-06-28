@@ -716,6 +716,12 @@ secondary_init:
 	tophys	(r30,r10)
 	l.sw	TI_KSP(r30),r1
 
+	l.jal	_ic_enable
+	 l.nop
+
+	l.jal	_dc_enable
+	 l.nop
+
 	l.jal	_flush_tlb
 	 l.nop
 
