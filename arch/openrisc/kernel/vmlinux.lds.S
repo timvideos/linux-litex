@@ -30,7 +30,7 @@
 #include <asm/cache.h>
 #include <asm-generic/vmlinux.lds.h>
 
-OUTPUT_FORMAT("elf32-or32", "elf32-or32", "elf32-or32")
+OUTPUT_FORMAT("elf32-or1k", "elf32-or1k", "elf32-or1k")
 jiffies = jiffies_64 + 4;
 
 SECTIONS
