@@ -31,6 +31,9 @@ mkdir -p /root &
 mkdir -p /dev/pts && \
  mount -t devpts none /dev/pts &
 
+mkdir -p /dev/shm && \
+ mount -t tmpfs none /dev/shm &
+
 echo "Configuring loopback device"
 #ifconfig lo 127.0.0.1
 ifup lo &
