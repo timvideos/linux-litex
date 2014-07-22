@@ -49,9 +49,31 @@
 
 /* ============================================[ tmp store locations ]=== */
 
+#define SPR_SHADOW_GPR(x)	((x) + SPR_GPR_BASE + 32)
+
 /*
  * emergency_print temporary stores
  */
+#ifdef CONFIG_OPENRISC_HAVE_SHADOW_GPRS
+#define EMERGENCY_PRINT_STORE_GPR4	l.mtspr r0,r4,SPR_SHADOW_GPR(14)
+#define EMERGENCY_PRINT_LOAD_GPR4	l.mfspr r4,r0,SPR_SHADOW_GPR(14)
+
+#define EMERGENCY_PRINT_STORE_GPR5	l.mtspr r0,r5,SPR_SHADOW_GPR(15)
+#define EMERGENCY_PRINT_LOAD_GPR5	l.mfspr r5,r0,SPR_SHADOW_GPR(15)
+
+#define EMERGENCY_PRINT_STORE_GPR6	l.mtspr r0,r6,SPR_SHADOW_GPR(16)
+#define EMERGENCY_PRINT_LOAD_GPR6	l.mfspr r6,r0,SPR_SHADOW_GPR(16)
+
+#define EMERGENCY_PRINT_STORE_GPR7	l.mtspr r0,r7,SPR_SHADOW_GPR(7)
+#define EMERGENCY_PRINT_LOAD_GPR7	l.mfspr r7,r0,SPR_SHADOW_GPR(7)
+
+#define EMERGENCY_PRINT_STORE_GPR8	l.mtspr r0,r8,SPR_SHADOW_GPR(8)
+#define EMERGENCY_PRINT_LOAD_GPR8	l.mfspr r8,r0,SPR_SHADOW_GPR(8)
+
+#define EMERGENCY_PRINT_STORE_GPR9	l.mtspr r0,r9,SPR_SHADOW_GPR(9)
+#define EMERGENCY_PRINT_LOAD_GPR9	l.mfspr r9,r0,SPR_SHADOW_GPR(9)
+
+#else /* !CONFIG_OPENRISC_HAVE_SHADOW_GPRS */
 #define EMERGENCY_PRINT_STORE_GPR4	l.sw    0x20(r0),r4
 #define EMERGENCY_PRINT_LOAD_GPR4	l.lwz   r4,0x20(r0)
 
@@ -70,36 +92,28 @@
 #define EMERGENCY_PRINT_STORE_GPR9	l.sw    0x34(r0),r9
 #define EMERGENCY_PRINT_LOAD_GPR9	l.lwz   r9,0x34(r0)
 
-/* TODO: (re)move */
-#define SPR_ISR0        (SPRGROUP_SYS + 21)
-#define SPR_ISR1        (SPRGROUP_SYS + 22)
-#define SPR_ISR2        (SPRGROUP_SYS + 23)
-#define SPR_ISR3        (SPRGROUP_SYS + 24)
-#define SPR_ISR4        (SPRGROUP_SYS + 25)
-#define SPR_ISR5        (SPRGROUP_SYS + 26)
-#define SPR_ISR6        (SPRGROUP_SYS + 27)
-#define SPR_ISR7        (SPRGROUP_SYS + 28)
+#endif
 
 /*
  * TLB miss handlers temorary stores
  */
-#if 1/*CONFIG_HAVE_SHADOW_GPRS*/
-#define EXCEPTION_STORE_GPR2		l.mtspr	r0,r2,SPR_ISR0
-#define EXCEPTION_LOAD_GPR2		l.mfspr r2,r0,SPR_ISR0
+#ifdef CONFIG_OPENRISC_HAVE_SHADOW_GPRS
+#define EXCEPTION_STORE_GPR2		l.mtspr r0,r2,SPR_SHADOW_GPR(2)
+#define EXCEPTION_LOAD_GPR2		l.mfspr r2,r0,SPR_SHADOW_GPR(2)
 
-#define EXCEPTION_STORE_GPR3		l.mtspr	r0,r3,SPR_ISR1
-#define EXCEPTION_LOAD_GPR3		l.mfspr r3,r0,SPR_ISR1
+#define EXCEPTION_STORE_GPR3		l.mtspr r0,r3,SPR_SHADOW_GPR(3)
+#define EXCEPTION_LOAD_GPR3		l.mfspr r3,r0,SPR_SHADOW_GPR(3)
 
-#define EXCEPTION_STORE_GPR4		l.mtspr	r0,r4,SPR_ISR2
-#define EXCEPTION_LOAD_GPR4		l.mfspr r4,r0,SPR_ISR2
+#define EXCEPTION_STORE_GPR4		l.mtspr r0,r4,SPR_SHADOW_GPR(4)
+#define EXCEPTION_LOAD_GPR4		l.mfspr r4,r0,SPR_SHADOW_GPR(4)
 
-#define EXCEPTION_STORE_GPR5		l.mtspr	r0,r5,SPR_ISR3
-#define EXCEPTION_LOAD_GPR5		l.mfspr r5,r0,SPR_ISR3
+#define EXCEPTION_STORE_GPR5		l.mtspr r0,r5,SPR_SHADOW_GPR(5)
+#define EXCEPTION_LOAD_GPR5		l.mfspr r5,r0,SPR_SHADOW_GPR(5)
 
-#define EXCEPTION_STORE_GPR6		l.mtspr	r0,r6,SPR_ISR4
-#define EXCEPTION_LOAD_GPR6		l.mfspr r6,r0,SPR_ISR4
+#define EXCEPTION_STORE_GPR6		l.mtspr r0,r6,SPR_SHADOW_GPR(6)
+#define EXCEPTION_LOAD_GPR6		l.mfspr r6,r0,SPR_SHADOW_GPR(6)
 
-#else /* !CONFIG_HAVE_SHADOW_GPRS */
+#else /* !CONFIG_OPENRISC_HAVE_SHADOW_GPRS */
 #define EXCEPTION_STORE_GPR2		l.sw    0x64(r0),r2
 #define EXCEPTION_LOAD_GPR2		l.lwz   r2,0x64(r0)
 
@@ -121,24 +135,24 @@
  * EXCEPTION_HANDLE temporary stores
  */
 
-#if 1/*CONFIG_HAVE_SHADOW_GPRS*/
-#define EXCEPTION_T_STORE_GPR30		l.mtspr	r0,r30,SPR_ISR5
-#define EXCEPTION_T_LOAD_GPR30(reg)	l.mfspr reg,r0,SPR_ISR5
+#ifdef CONFIG_OPENRISC_HAVE_SHADOW_GPRS
+#define EXCEPTION_T_STORE_GPR30		l.mtspr r0,r30,SPR_SHADOW_GPR(30)
+#define EXCEPTION_T_LOAD_GPR30(reg)	l.mfspr reg,r0,SPR_SHADOW_GPR(30)
 
-#define EXCEPTION_T_STORE_GPR10		l.mtspr	r0,r10,SPR_ISR6
-#define EXCEPTION_T_LOAD_GPR10(reg)	l.mfspr reg,r0,SPR_ISR6
+#define EXCEPTION_T_STORE_GPR10		l.mtspr r0,r10,SPR_SHADOW_GPR(10)
+#define EXCEPTION_T_LOAD_GPR10(reg)	l.mfspr reg,r0,SPR_SHADOW_GPR(10)
 
-#define EXCEPTION_T_STORE_SP		l.mtspr	r0,r1,SPR_ISR7
-#define EXCEPTION_T_LOAD_SP(reg)	l.mfspr reg,r0,SPR_ISR7
+#define EXCEPTION_T_STORE_SP		l.mtspr r0,r1,SPR_SHADOW_GPR(1)
+#define EXCEPTION_T_LOAD_SP(reg)	l.mfspr reg,r0,SPR_SHADOW_GPR(1)
 
-#else /* !CONFIG_HAVE_SHADOW_GPRS */
+#else /* !CONFIG_OPENRISC_HAVE_SHADOW_GPRS */
 #define EXCEPTION_T_STORE_GPR30		l.sw    0x78(r0),r30
 #define EXCEPTION_T_LOAD_GPR30(reg)	l.lwz   reg,0x78(r0)
 
 #define EXCEPTION_T_STORE_GPR10		l.sw    0x7c(r0),r10
 #define EXCEPTION_T_LOAD_GPR10(reg)	l.lwz   reg,0x7c(r0)
 
-#define EXCEPTION_T_STORE_SP		l.sw	0x80(r0),r1
+#define EXCEPTION_T_STORE_SP		l.sw    0x80(r0),r1
 #define EXCEPTION_T_LOAD_SP(reg)	l.lwz   reg,0x80(r0)
 #endif
 
