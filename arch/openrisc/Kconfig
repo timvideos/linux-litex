@@ -149,12 +149,12 @@ config OPENRISC_NO_SPR_SR_DSX
 config OPENRISC_HAVE_SHADOW_GPRS
 	bool "Support for shadow gpr files"
 	help
-	  Say Y here if you have support shadow gpr files,
-	  they will then be used as a scratch reg storage
-	  on exception entry.
+	  Say Y here if your OpenRISC processor features shadowed
+	  register files. They will in such case be used as a
+	  scratch reg storage on exception entry.
 
-	  If you are running a SMP setup, this is mandatory.
-	  Say N here if you are on a unicore system and unsure.
+	  On SMP systems, this feature is mandatory.
+	  On a unicore system it's safe to say N here if you are unsure.
 
 config CMDLINE
         string "Default kernel command string"
