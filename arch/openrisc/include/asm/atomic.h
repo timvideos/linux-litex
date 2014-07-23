@@ -13,7 +13,7 @@
 
 #ifdef CONFIG_OPENRISC_HAVE_INST_LWA_SWA
 
-static inline int _atomic_add_return(int i, atomic_t *v)
+static inline int atomic_add_return(int i, atomic_t *v)
 {
 	int tmp;
 
@@ -30,7 +30,7 @@ static inline int _atomic_add_return(int i, atomic_t *v)
 	return tmp;
 }
 
-static inline int _atomic_sub_return(int i, atomic_t *v)
+static inline int atomic_sub_return(int i, atomic_t *v)
 {
 	int tmp;
 
@@ -47,7 +47,7 @@ static inline int _atomic_sub_return(int i, atomic_t *v)
 	return tmp;
 }
 
-static inline void _atomic_clear_mask(unsigned long mask, atomic_t *v)
+static inline void atomic_clear_mask(unsigned long mask, atomic_t *v)
 {
 	unsigned long tmp;
 
@@ -62,7 +62,7 @@ static inline void _atomic_clear_mask(unsigned long mask, atomic_t *v)
 		: "cc", "memory");
 }
 
-static inline void _atomic_set_mask(unsigned long mask, atomic_t *v)
+static inline void atomic_set_mask(unsigned long mask, atomic_t *v)
 {
 	unsigned long tmp;
 
@@ -77,10 +77,10 @@ static inline void _atomic_set_mask(unsigned long mask, atomic_t *v)
 		: "cc", "memory");
 }
 
-#define atomic_add_return	_atomic_add_return
-#define atomic_sub_return	_atomic_sub_return
-#define atomic_clear_mask	_atomic_clear_mask
-#define atomic_set_mask		_atomic_set_mask
+#define atomic_add_return	atomic_add_return
+#define atomic_sub_return	atomic_sub_return
+#define atomic_clear_mask	atomic_clear_mask
+#define atomic_set_mask		atomic_set_mask
 
 #endif
 #include <asm-generic/atomic.h>

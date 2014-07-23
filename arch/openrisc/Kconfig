@@ -111,6 +111,7 @@ config OPENRISC_HAVE_INST_LWA_SWA
 	help
 	  Select this if your implementation have l.lwa and l.swa atomic
 	  instructions.
+
 endmenu
 
 config NR_CPUS
