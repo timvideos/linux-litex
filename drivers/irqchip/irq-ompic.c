@@ -31,7 +31,7 @@
 
 #define OMPIC_IPI_DATA(x)		((x) & 0xffff)
 
-DEFINE_SPINLOCK(ompic_ipi_lock);
+DEFINE_RAW_SPINLOCK(ompic_ipi_lock);
 
 static void __iomem *ompic_base;
 
@@ -51,10 +51,10 @@ void ompic_raise_softirq(const struct cpumask *mask, unsigned int irq)
 	unsigned int dst_cpu;
 	unsigned int src_cpu = smp_processor_id();
 	int retry = 10000;
+	unsigned long flags;
 
+	raw_spin_lock_irqsave(&ompic_ipi_lock, flags);
 	for_each_cpu(dst_cpu, mask) {
-		spin_lock(&ompic_ipi_lock);
-
 		while (--retry &&
 		       ompic_readreg(ompic_base, OMPIC_IPI_STAT(dst_cpu)) &
 		       OMPIC_IPI_STAT_IRQ_PENDING) {
@@ -66,11 +66,10 @@ void ompic_raise_softirq(const struct cpumask *mask, unsigned int irq)
 			       OMPIC_IPI_CTRL_DST(dst_cpu) |
 			       OMPIC_IPI_DATA(irq));
 
-		spin_unlock(&ompic_ipi_lock);
-
 		if (!retry)
 			pr_crit("OMPIC softirq timed out");
 	}
+	raw_spin_unlock_irqrestore(&ompic_ipi_lock, flags);
 }
 #endif
 
