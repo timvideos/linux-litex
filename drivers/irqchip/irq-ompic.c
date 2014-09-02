@@ -50,7 +50,7 @@ void ompic_raise_softirq(const struct cpumask *mask, unsigned int irq)
 {
 	unsigned int dst_cpu;
 	unsigned int src_cpu = smp_processor_id();
-	int retry = 1000;
+	int retry = 10000;
 
 	for_each_cpu(dst_cpu, mask) {
 		spin_lock(&ompic_ipi_lock);
