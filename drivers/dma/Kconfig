@@ -375,6 +375,13 @@ config XILINX_VDMA
 	  channels, Memory Mapped to Stream (MM2S) and Stream to
 	  Memory Mapped (S2MM) for the data transfers.
 
+config WISHBONE_STREAMER_DMA
+	bool "Wishbone streamer DMA"
+	select DMA_ENGINE
+	select DMA_VIRTUAL_CHANNELS
+	help
+	  Enable support for Wishbone streamer DMA softcore
+
 config DMA_ENGINE
 	bool
 
