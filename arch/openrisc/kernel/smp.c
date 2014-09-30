@@ -12,6 +12,8 @@
 
 #include <linux/cpu.h>
 #include <linux/sched.h>
+#include <linux/irq.h>
+#include <asm/cpuinfo.h>
 #include <asm/mmu_context.h>
 #include <asm/tlbflush.h>
 
@@ -97,6 +99,8 @@ int __cpu_up(unsigned int cpu, struct task_struct *idle)
 	return ret;
 }
 
+extern void openrisc_clockevent_init(void);
+
 asmlinkage void secondary_start_kernel(void)
 {
 	struct mm_struct *mm = &init_mm;
@@ -112,6 +116,8 @@ asmlinkage void secondary_start_kernel(void)
 	printk("CPU%u: Booted secondary processor\n", cpu);
 
 	setup_cpuinfo();
+	openrisc_clockevent_init();
+
 	notify_cpu_starting(cpu);
 
 	/*
