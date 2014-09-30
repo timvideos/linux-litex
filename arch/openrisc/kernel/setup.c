@@ -303,8 +303,6 @@ void calibrate_delay(void)
 
 void __init setup_arch(char **cmdline_p)
 {
-	unsigned long max_low_pfn;
-
 	unflatten_and_copy_device_tree();
 
 	setup_cpuinfo();
