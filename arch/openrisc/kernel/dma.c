@@ -33,6 +33,7 @@ page_set_nocache(pte_t *pte, unsigned long addr,
 		 unsigned long next, struct mm_walk *walk)
 {
 	unsigned long cl;
+	struct cpuinfo_or1k *cpuinfo = &cpuinfo_or1k[smp_processor_id()];
 
 	pte_val(*pte) |= _PAGE_CI;
 
@@ -43,7 +44,7 @@ page_set_nocache(pte_t *pte, unsigned long addr,
 	flush_tlb_page(NULL, addr);
 
 	/* Flush page out of dcache */
-	for (cl = __pa(addr); cl < __pa(next); cl += cpuinfo.dcache_block_size)
+	for (cl = __pa(addr); cl < __pa(next); cl += cpuinfo->dcache_block_size)
 		mtspr(SPR_DCBFR, cl);
 
 	return 0;
@@ -141,18 +142,19 @@ or1k_map_page(struct device *dev, struct page *page,
 {
 	unsigned long cl;
 	dma_addr_t addr = page_to_phys(page) + offset;
+	struct cpuinfo_or1k *cpuinfo = &cpuinfo_or1k[smp_processor_id()];
 
 	switch (dir) {
 	case DMA_TO_DEVICE:
 		/* Flush the dcache for the requested range */
 		for (cl = addr; cl < addr + size;
-		     cl += cpuinfo.dcache_block_size)
+		     cl += cpuinfo->dcache_block_size)
 			mtspr(SPR_DCBFR, cl);
 		break;
 	case DMA_FROM_DEVICE:
 		/* Invalidate the dcache for the requested range */
 		for (cl = addr; cl < addr + size;
-		     cl += cpuinfo.dcache_block_size)
+		     cl += cpuinfo->dcache_block_size)
 			mtspr(SPR_DCBIR, cl);
 		break;
 	default:
@@ -211,9 +213,10 @@ or1k_sync_single_for_cpu(struct device *dev,
 {
 	unsigned long cl;
 	dma_addr_t addr = dma_handle;
+	struct cpuinfo_or1k *cpuinfo = &cpuinfo_or1k[smp_processor_id()];
 
 	/* Invalidate the dcache for the requested range */
-	for (cl = addr; cl < addr + size; cl += cpuinfo.dcache_block_size)
+	for (cl = addr; cl < addr + size; cl += cpuinfo->dcache_block_size)
 		mtspr(SPR_DCBIR, cl);
 }
 
@@ -224,9 +227,10 @@ or1k_sync_single_for_device(struct device *dev,
 {
 	unsigned long cl;
 	dma_addr_t addr = dma_handle;
+	struct cpuinfo_or1k *cpuinfo = &cpuinfo_or1k[smp_processor_id()];
 
 	/* Flush the dcache for the requested range */
-	for (cl = addr; cl < addr + size; cl += cpuinfo.dcache_block_size)
+	for (cl = addr; cl < addr + size; cl += cpuinfo->dcache_block_size)
 		mtspr(SPR_DCBFR, cl);
 }
 

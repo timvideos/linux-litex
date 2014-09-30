@@ -111,6 +111,7 @@ asmlinkage void secondary_start_kernel(void)
 
 	printk("CPU%u: Booted secondary processor\n", cpu);
 
+	setup_cpuinfo();
 	notify_cpu_starting(cpu);
 
 	/*

@@ -126,10 +126,11 @@ irqreturn_t __irq_entry timer_interrupt(struct pt_regs *regs)
 static __init void openrisc_clockevent_init(void)
 {
 	clockevent_openrisc_timer.cpumask = cpumask_of(0);
+	struct cpuinfo_or1k *cpuinfo = &cpuinfo_or1k[smp_processor_id()];
 
 	/* We only have 28 bits */
 	clockevents_config_and_register(&clockevent_openrisc_timer,
-					cpuinfo.clock_frequency,
+					cpuinfo->clock_frequency,
 					100, 0x0fffffff);
 
 }
@@ -156,7 +157,9 @@ static struct clocksource openrisc_timer = {
 
 static int __init openrisc_timer_init(void)
 {
-	if (clocksource_register_hz(&openrisc_timer, cpuinfo.clock_frequency))
+	struct cpuinfo_or1k *cpuinfo = &cpuinfo_or1k[smp_processor_id()];
+
+	if (clocksource_register_hz(&openrisc_timer, cpuinfo->clock_frequency))
 		panic("failed to register clocksource");
 
 	/* Enable the incrementer: 'continuous' mode with interrupt disabled */
