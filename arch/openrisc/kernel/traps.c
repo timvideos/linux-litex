@@ -40,6 +40,8 @@
 extern char _etext, _stext;
 
 int kstack_depth_to_print = 0x180;
+int lwa_flag;
+unsigned long __user *lwa_addr;
 
 static inline int valid_stack_ptr(struct thread_info *tinfo, void *p)
 {
@@ -334,10 +336,125 @@ asmlinkage void do_bus_fault(struct pt_regs *regs, unsigned long address)
 	}
 }
 
+static inline void adjust_pc(struct pt_regs *regs, unsigned long address)
+{
+	/* FIXME: check for delay slot... */
+	regs->pc += 4;
+}
+
+static inline void simulate_lwa(struct pt_regs *regs, unsigned long address,
+				unsigned int insn)
+{
+	unsigned int ra, rd;
+	unsigned long value;
+	unsigned long orig_pc;
+	long imm;
+
+	const struct exception_table_entry *entry;
+
+	orig_pc = regs->pc;
+	adjust_pc(regs, address);
+
+	ra = (insn >> 16) & 0x1f;
+	rd = (insn >> 21) & 0x1f;
+	imm = (short)insn;
+	lwa_addr = (unsigned long __user *)(regs->gpr[ra] + imm);
+
+	if ((unsigned long)lwa_addr & 0x3) {
+		do_unaligned_access(regs, address);
+		return;
+	}
+
+	if (get_user(value, lwa_addr)) {
+		if (user_mode(regs)) {
+			force_sig(SIGSEGV, current);
+			return;
+		}
+
+		if ((entry = search_exception_tables(orig_pc))) {
+			regs->pc = entry->fixup;
+			return;
+		}
+
+		/* kernel access in kernel space, load it directly */
+		value = *((unsigned long *)lwa_addr);
+	}
+
+	lwa_flag = 1;
+	regs->gpr[rd] = value;
+}
+
+static inline void simulate_swa(struct pt_regs *regs, unsigned long address,
+				unsigned int insn)
+{
+	unsigned long __user *vaddr;
+	unsigned long orig_pc;
+	unsigned int ra, rb;
+	long imm;
+
+	const struct exception_table_entry *entry;
+
+	orig_pc = regs->pc;
+	adjust_pc(regs, address);
+
+	ra = (insn >> 16) & 0x1f;
+	rb = (insn >> 11) & 0x1f;
+	imm = (short)(((insn & 0x2200000) >> 10) | (insn & 0x7ff));
+	vaddr = (unsigned long __user *)(regs->gpr[ra] + imm);
+
+	if (!lwa_flag || vaddr != lwa_addr) {
+		regs->sr &= ~SPR_SR_F;
+		return;
+	}
+
+	if ((unsigned long)vaddr & 0x3) {
+		do_unaligned_access(regs, address);
+		return;
+	}
+
+	if (put_user(regs->gpr[rb], vaddr)) {
+		if (user_mode(regs)) {
+			force_sig(SIGSEGV, current);
+			return;
+		}
+
+		if ((entry = search_exception_tables(orig_pc))) {
+			regs->pc = entry->fixup;
+			return;
+		}
+
+		/* kernel access in kernel space, store it directly */
+		*((unsigned long *)vaddr) = regs->gpr[rb];
+	}
+
+	lwa_flag = 0;
+	regs->sr |= SPR_SR_F;
+}
+
+#define INSN_LWA	0x1b
+#define INSN_SWA	0x33
+
 asmlinkage void do_illegal_instruction(struct pt_regs *regs,
 				       unsigned long address)
 {
 	siginfo_t info;
+	unsigned int op;
+	unsigned int insn = *((unsigned int *)address);
+
+	op = insn >> 26;
+
+	switch (op) {
+	case INSN_LWA:
+		simulate_lwa(regs, address, insn);
+		return;
+
+	case INSN_SWA:
+		simulate_swa(regs, address, insn);
+		return;
+
+	default:
+		break;
+	}
 
 	if (user_mode(regs)) {
 		/* Send a SIGILL */
