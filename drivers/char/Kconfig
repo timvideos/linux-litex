@@ -606,5 +606,7 @@ default n
 	---help---
 	  This enables SCET timer as a char device.
 
+source "drivers/char/xillybus/Kconfig"
+
 endmenu
 

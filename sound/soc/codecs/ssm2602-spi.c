@@ -28,8 +28,6 @@ static int ssm2602_spi_remove(struct spi_device *spi)
 
 static const struct of_device_id ssm2602_of_match[] = {
 	{ .compatible = "adi,ssm2602", },
-	{ .compatible = "adi,ssm2603", },
-	{ .compatible = "adi,ssm2604", },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, ssm2602_of_match);

@@ -1230,8 +1230,6 @@ static int ethoc_probe(struct platform_device *pdev)
 		goto error;
 	}
 
-	ether_setup(netdev);
-
 	/* setup the net_device structure */
 	netdev->netdev_ops = &ethoc_netdev_ops;
 	netdev->watchdog_timeo = ETHOC_TIMEOUT;
