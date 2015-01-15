@@ -377,6 +377,7 @@ static int ocspi_probe(struct platform_device *pdev)
 	struct ocspi *spi;
 	struct resource *r;
 	int status = 0;
+	struct cpuinfo_or1k *cpuinfo = &cpuinfo_or1k[smp_processor_id()];
 
 	master = spi_alloc_master(&pdev->dev, sizeof *spi);
 	if (master == NULL) {
@@ -407,8 +408,8 @@ static int ocspi_probe(struct platform_device *pdev)
 	spi = spi_master_get_devdata(master);
 	spi->master = master;
 
-	spi->max_speed = cpuinfo.clock_frequency >> 1;
-	spi->min_speed = cpuinfo.clock_frequency >> 12;
+	spi->max_speed = cpuinfo->clock_frequency >> 1;
+	spi->min_speed = cpuinfo->clock_frequency >> 12;
 
 	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (r == NULL) {
