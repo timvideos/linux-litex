@@ -19,7 +19,7 @@ import gdb
 import os
 import os.path
 
-pythondir = '/opt/cross/or1k-linux-musl/share/gcc-4.9.1/python'
+pythondir = '/opt/cross/or1k-linux-musl/share/gcc-4.9.2/python'
 libdir = '/opt/cross/or1k-linux-musl/or1k-linux-musl/lib'
 
 # This file might be loaded when there is no current objfile.  This
