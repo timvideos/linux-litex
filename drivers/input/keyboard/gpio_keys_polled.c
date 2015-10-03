@@ -125,7 +125,7 @@ static struct gpio_keys_platform_data *gpio_keys_polled_get_devtree_pdata(struct
 	device_for_each_child_node(dev, child) {
 		struct gpio_desc *desc;
 
-		desc = devm_get_gpiod_from_child(dev, child);
+		desc = devm_get_gpiod_from_child(dev, NULL, child);
 		if (IS_ERR(desc)) {
 			error = PTR_ERR(desc);
 			if (error != -EPROBE_DEFER)
@@ -246,7 +246,7 @@ static int gpio_keys_polled_probe(struct platform_device *pdev)
 		 * convert it to descriptor.
 		 */
 		if (!button->gpiod && gpio_is_valid(button->gpio)) {
-			unsigned flags = 0;
+			unsigned flags = GPIOF_IN;
 
 			if (button->active_low)
 				flags |= GPIOF_ACTIVE_LOW;

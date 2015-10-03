@@ -26,8 +26,8 @@
 
 #include <asm/processor.h>
 #include <asm/ucontext.h>
-#include <asm/i387.h>
-#include <asm/fpu-internal.h>
+#include <asm/fpu/internal.h>
+#include <asm/fpu/signal.h>
 #include <asm/vdso.h>
 #include <asm/mce.h>
 #include <asm/sighandling.h>
@@ -61,8 +61,7 @@
 	regs->seg = GET_SEG(seg) | 3;			\
 } while (0)
 
-int restore_sigcontext(struct pt_regs *regs, struct sigcontext __user *sc,
-		       unsigned long *pax)
+int restore_sigcontext(struct pt_regs *regs, struct sigcontext __user *sc)
 {
 	void __user *buf;
 	unsigned int tmpflags;
@@ -81,7 +80,7 @@ int restore_sigcontext(struct pt_regs *regs, struct sigcontext __user *sc,
 #endif /* CONFIG_X86_32 */
 
 		COPY(di); COPY(si); COPY(bp); COPY(sp); COPY(bx);
-		COPY(dx); COPY(cx); COPY(ip);
+		COPY(dx); COPY(cx); COPY(ip); COPY(ax);
 
 #ifdef CONFIG_X86_64
 		COPY(r8);
@@ -109,11 +108,11 @@ int restore_sigcontext(struct pt_regs *regs, struct sigcontext __user *sc,
 		regs->orig_ax = -1;		/* disable syscall checks */
 
 		get_user_ex(buf, &sc->fpstate);
-
-		get_user_ex(*pax, &sc->ax);
 	} get_user_catch(err);
 
-	err |= restore_xstate_sig(buf, config_enabled(CONFIG_X86_32));
+	err |= fpu__restore_sig(buf, config_enabled(CONFIG_X86_32));
+
+	force_iret();
 
 	return err;
 }
@@ -206,6 +205,7 @@ get_sigframe(struct k_sigaction *ka, struct pt_regs *regs, size_t frame_size,
 	unsigned long sp = regs->sp;
 	unsigned long buf_fx = 0;
 	int onsigstack = on_sig_stack(sp);
+	struct fpu *fpu = &current->thread.fpu;
 
 	/* redzone */
 	if (config_enabled(CONFIG_X86_64))
@@ -225,9 +225,9 @@ get_sigframe(struct k_sigaction *ka, struct pt_regs *regs, size_t frame_size,
 		}
 	}
 
-	if (used_math()) {
-		sp = alloc_mathframe(sp, config_enabled(CONFIG_X86_32),
-				     &buf_fx, &math_size);
+	if (fpu->fpstate_active) {
+		sp = fpu__alloc_mathframe(sp, config_enabled(CONFIG_X86_32),
+					  &buf_fx, &math_size);
 		*fpstate = (void __user *)sp;
 	}
 
@@ -241,8 +241,8 @@ get_sigframe(struct k_sigaction *ka, struct pt_regs *regs, size_t frame_size,
 		return (void __user *)-1L;
 
 	/* save i387 and extended state */
-	if (used_math() &&
-	    save_xstate_sig(*fpstate, (void __user *)buf_fx, math_size) < 0)
+	if (fpu->fpstate_active &&
+	    copy_fpstate_to_sigframe(*fpstate, (void __user *)buf_fx, math_size) < 0)
 		return (void __user *)-1L;
 
 	return (void __user *)sp;
@@ -539,7 +539,6 @@ asmlinkage unsigned long sys_sigreturn(void)
 {
 	struct pt_regs *regs = current_pt_regs();
 	struct sigframe __user *frame;
-	unsigned long ax;
 	sigset_t set;
 
 	frame = (struct sigframe __user *)(regs->sp - 8);
@@ -553,9 +552,9 @@ asmlinkage unsigned long sys_sigreturn(void)
 
 	set_current_blocked(&set);
 
-	if (restore_sigcontext(regs, &frame->sc, &ax))
+	if (restore_sigcontext(regs, &frame->sc))
 		goto badframe;
-	return ax;
+	return regs->ax;
 
 badframe:
 	signal_fault(regs, frame, "sigreturn");
@@ -568,7 +567,6 @@ asmlinkage long sys_rt_sigreturn(void)
 {
 	struct pt_regs *regs = current_pt_regs();
 	struct rt_sigframe __user *frame;
-	unsigned long ax;
 	sigset_t set;
 
 	frame = (struct rt_sigframe __user *)(regs->sp - sizeof(long));
@@ -579,37 +577,39 @@ asmlinkage long sys_rt_sigreturn(void)
 
 	set_current_blocked(&set);
 
-	if (restore_sigcontext(regs, &frame->uc.uc_mcontext, &ax))
+	if (restore_sigcontext(regs, &frame->uc.uc_mcontext))
 		goto badframe;
 
 	if (restore_altstack(&frame->uc.uc_stack))
 		goto badframe;
 
-	return ax;
+	return regs->ax;
 
 badframe:
 	signal_fault(regs, frame, "rt_sigreturn");
 	return 0;
 }
 
-/*
- * OK, we're invoking a handler:
- */
-static int signr_convert(int sig)
+static inline int is_ia32_compat_frame(void)
 {
-#ifdef CONFIG_X86_32
-	struct thread_info *info = current_thread_info();
+	return config_enabled(CONFIG_IA32_EMULATION) &&
+	       test_thread_flag(TIF_IA32);
+}
 
-	if (info->exec_domain && info->exec_domain->signal_invmap && sig < 32)
-		return info->exec_domain->signal_invmap[sig];
-#endif /* CONFIG_X86_32 */
-	return sig;
+static inline int is_ia32_frame(void)
+{
+	return config_enabled(CONFIG_X86_32) || is_ia32_compat_frame();
+}
+
+static inline int is_x32_frame(void)
+{
+	return config_enabled(CONFIG_X86_X32_ABI) && test_thread_flag(TIF_X32);
 }
 
 static int
 setup_rt_frame(struct ksignal *ksig, struct pt_regs *regs)
 {
-	int usig = signr_convert(ksig->sig);
+	int usig = ksig->sig;
 	sigset_t *set = sigmask_to_save();
 	compat_sigset_t *cset = (compat_sigset_t *) set;
 
@@ -629,7 +629,9 @@ setup_rt_frame(struct ksignal *ksig, struct pt_regs *regs)
 static void
 handle_signal(struct ksignal *ksig, struct pt_regs *regs)
 {
-	bool failed;
+	bool stepping, failed;
+	struct fpu *fpu = &current->thread.fpu;
+
 	/* Are we from a system call? */
 	if (syscall_get_nr(current, regs) >= 0) {
 		/* If so, check system call restarting.. */
@@ -653,12 +655,13 @@ handle_signal(struct ksignal *ksig, struct pt_regs *regs)
 	}
 
 	/*
-	 * If TF is set due to a debugger (TIF_FORCED_TF), clear the TF
-	 * flag so that register information in the sigcontext is correct.
+	 * If TF is set due to a debugger (TIF_FORCED_TF), clear TF now
+	 * so that register information in the sigcontext is correct and
+	 * then notify the tracer before entering the signal handler.
 	 */
-	if (unlikely(regs->flags & X86_EFLAGS_TF) &&
-	    likely(test_and_clear_thread_flag(TIF_FORCED_TF)))
-		regs->flags &= ~X86_EFLAGS_TF;
+	stepping = test_thread_flag(TIF_SINGLESTEP);
+	if (stepping)
+		user_disable_single_step(current);
 
 	failed = (setup_rt_frame(ksig, regs) < 0);
 	if (!failed) {
@@ -669,19 +672,17 @@ handle_signal(struct ksignal *ksig, struct pt_regs *regs)
 		 * it might disable possible debug exception from the
 		 * signal handler.
 		 *
-		 * Clear TF when entering the signal handler, but
-		 * notify any tracer that was single-stepping it.
-		 * The tracer may want to single-step inside the
-		 * handler too.
+		 * Clear TF for the case when it wasn't set by debugger to
+		 * avoid the recursive send_sigtrap() in SIGTRAP handler.
 		 */
 		regs->flags &= ~(X86_EFLAGS_DF|X86_EFLAGS_RF|X86_EFLAGS_TF);
 		/*
 		 * Ensure the signal handler starts with the new fpu state.
 		 */
-		if (used_math())
-			drop_init_fpu(current);
+		if (fpu->fpstate_active)
+			fpu__clear(fpu);
 	}
-	signal_setup_done(failed, ksig, test_thread_flag(TIF_SINGLESTEP));
+	signal_setup_done(failed, ksig, stepping);
 }
 
 #ifdef CONFIG_X86_32
@@ -780,7 +781,6 @@ asmlinkage long sys32_x32_rt_sigreturn(void)
 	struct pt_regs *regs = current_pt_regs();
 	struct rt_sigframe_x32 __user *frame;
 	sigset_t set;
-	unsigned long ax;
 
 	frame = (struct rt_sigframe_x32 __user *)(regs->sp - 8);
 
@@ -791,13 +791,13 @@ asmlinkage long sys32_x32_rt_sigreturn(void)
 
 	set_current_blocked(&set);
 
-	if (restore_sigcontext(regs, &frame->uc.uc_mcontext, &ax))
+	if (restore_sigcontext(regs, &frame->uc.uc_mcontext))
 		goto badframe;
 
 	if (compat_restore_altstack(&frame->uc.uc_stack))
 		goto badframe;
 
-	return ax;
+	return regs->ax;
 
 badframe:
 	signal_fault(regs, frame, "x32 rt_sigreturn");

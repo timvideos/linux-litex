@@ -61,6 +61,12 @@ void xenvif_skb_zerocopy_prepare(struct xenvif_queue *queue,
 void xenvif_skb_zerocopy_complete(struct xenvif_queue *queue)
 {
 	atomic_dec(&queue->inflight_packets);
+
+	/* Wake the dealloc thread _after_ decrementing inflight_packets so
+	 * that if kthread_stop() has already been called, the dealloc thread
+	 * does not wait forever with nothing to wake it.
+	 */
+	wake_up(&queue->dealloc_wq);
 }
 
 int xenvif_schedulable(struct xenvif *vif)
@@ -437,7 +443,7 @@ struct xenvif *xenvif_alloc(struct device *parent, domid_t domid,
 	 * stolen by an Ethernet bridge for STP purposes.
 	 * (FE:FF:FF:FF:FF:FF)
 	 */
-	memset(dev->dev_addr, 0xFF, ETH_ALEN);
+	eth_broadcast_addr(dev->dev_addr);
 	dev->dev_addr[0] &= ~0x01;
 
 	netif_carrier_off(dev);
@@ -463,6 +469,7 @@ int xenvif_init_queue(struct xenvif_queue *queue)
 	queue->credit_bytes = queue->remaining_credit = ~0UL;
 	queue->credit_usec  = 0UL;
 	init_timer(&queue->credit_timeout);
+	queue->credit_timeout.function = xenvif_tx_credit_callback;
 	queue->credit_window_start = get_jiffies_64();
 
 	queue->rx_queue_max = XENVIF_RX_QUEUE_BYTES;

@@ -45,7 +45,13 @@ static int ip_ping_group_range_max[] = { GID_T_MAX, GID_T_MAX };
 /* Update system visible IP port range */
 static void set_local_port_range(struct net *net, int range[2])
 {
+	bool same_parity = !((range[0] ^ range[1]) & 1);
+
 	write_seqlock(&net->ipv4.ip_local_ports.lock);
+	if (same_parity && !net->ipv4.ip_local_ports.warned) {
+		net->ipv4.ip_local_ports.warned = true;
+		pr_err_ratelimited("ip_local_port_range: prefer different parity for start/end values.\n");
+	}
 	net->ipv4.ip_local_ports.range[0] = range[0];
 	net->ipv4.ip_local_ports.range[1] = range[1];
 	write_sequnlock(&net->ipv4.ip_local_ports.lock);
@@ -702,7 +708,7 @@ static struct ctl_table ipv4_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= &zero,
+		.extra1		= &one,
 		.extra2		= &gso_max_segs,
 	},
 	{
@@ -821,6 +827,13 @@ static struct ctl_table ipv4_net_table[] = {
 		.proc_handler	= proc_dointvec
 	},
 	{
+		.procname	= "tcp_ecn_fallback",
+		.data		= &init_net.ipv4.sysctl_tcp_ecn_fallback,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec
+	},
+	{
 		.procname	= "ip_local_port_range",
 		.maxlen		= sizeof(init_net.ipv4.ip_local_ports.range),
 		.data		= &init_net.ipv4.ip_local_ports.range,
@@ -883,6 +896,20 @@ static struct ctl_table ipv4_net_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
 	},
+	{
+		.procname	= "tcp_probe_threshold",
+		.data		= &init_net.ipv4.sysctl_tcp_probe_threshold,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "tcp_probe_interval",
+		.data		= &init_net.ipv4.sysctl_tcp_probe_interval,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
 	{ }
 };
 
@@ -895,7 +922,7 @@ static __net_init int ipv4_sysctl_init_net(struct net *net)
 		int i;
 
 		table = kmemdup(table, sizeof(ipv4_net_table), GFP_KERNEL);
-		if (table == NULL)
+		if (!table)
 			goto err_alloc;
 
 		/* Update the variables to point into the current struct net */
@@ -904,7 +931,7 @@ static __net_init int ipv4_sysctl_init_net(struct net *net)
 	}
 
 	net->ipv4.ipv4_hdr = register_net_sysctl(net, "net/ipv4", table);
-	if (net->ipv4.ipv4_hdr == NULL)
+	if (!net->ipv4.ipv4_hdr)
 		goto err_reg;
 
 	net->ipv4.sysctl_local_reserved_ports = kzalloc(65536 / 8, GFP_KERNEL);
@@ -942,7 +969,7 @@ static __init int sysctl_ipv4_init(void)
 	struct ctl_table_header *hdr;
 
 	hdr = register_net_sysctl(&init_net, "net/ipv4", ipv4_table);
-	if (hdr == NULL)
+	if (!hdr)
 		return -ENOMEM;
 
 	if (register_pernet_subsys(&ipv4_sysctl_ops)) {

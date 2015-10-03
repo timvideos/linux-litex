@@ -1307,7 +1307,7 @@ static int ethoc_resume(struct platform_device *pdev)
 # define ethoc_resume  NULL
 #endif
 
-static struct of_device_id ethoc_match[] = {
+static const struct of_device_id ethoc_match[] = {
 	{ .compatible = "opencores,ethoc", },
 	{ .compatible = "opencores,ethmac-rtlsvn338" },
 	{},

@@ -274,6 +274,7 @@
 #define RESPONSE_ENTRY_CNT_FX00		256     /* Number of response entries.*/
 
 struct req_que;
+struct qla_tgt_sess;
 
 /*
  * (sd.h is not exported, hence local inclusion)
@@ -2026,6 +2027,7 @@ typedef struct fc_port {
 	uint16_t port_id;
 
 	unsigned long retry_delay_timestamp;
+	struct qla_tgt_sess *tgt_session;
 } fc_port_t;
 
 #include "qla_mr.h"
@@ -2163,7 +2165,7 @@ struct ct_fdmi_hba_attr {
 		uint8_t node_name[WWN_SIZE];
 		uint8_t manufacturer[64];
 		uint8_t serial_num[32];
-		uint8_t model[16];
+		uint8_t model[16+1];
 		uint8_t model_desc[80];
 		uint8_t hw_version[32];
 		uint8_t driver_version[32];
@@ -2184,9 +2186,9 @@ struct ct_fdmiv2_hba_attr {
 	uint16_t len;
 	union {
 		uint8_t node_name[WWN_SIZE];
-		uint8_t manufacturer[32];
+		uint8_t manufacturer[64];
 		uint8_t serial_num[32];
-		uint8_t model[16];
+		uint8_t model[16+1];
 		uint8_t model_desc[80];
 		uint8_t hw_version[16];
 		uint8_t driver_version[32];
@@ -2252,7 +2254,7 @@ struct ct_fdmiv2_port_attr {
 		uint32_t cur_speed;
 		uint32_t max_frame_size;
 		uint8_t os_dev_name[32];
-		uint8_t host_name[32];
+		uint8_t host_name[256];
 		uint8_t node_name[WWN_SIZE];
 		uint8_t port_name[WWN_SIZE];
 		uint8_t port_sym_name[128];
@@ -2283,7 +2285,7 @@ struct ct_fdmi_port_attr {
 		uint32_t cur_speed;
 		uint32_t max_frame_size;
 		uint8_t os_dev_name[32];
-		uint8_t host_name[32];
+		uint8_t host_name[256];
 	} a;
 };
 
@@ -3132,7 +3134,8 @@ struct qla_hw_data {
 				IS_QLA25XX(ha) || IS_QLA81XX(ha) || \
 				IS_QLA82XX(ha) || IS_QLA83XX(ha) || \
 				IS_QLA8044(ha) || IS_QLA27XX(ha))
-#define IS_MSIX_NACK_CAPABLE(ha) (IS_QLA81XX(ha) || IS_QLA83XX(ha))
+#define IS_MSIX_NACK_CAPABLE(ha) (IS_QLA81XX(ha) || IS_QLA83XX(ha) || \
+				IS_QLA27XX(ha))
 #define IS_NOPOLLING_TYPE(ha)	(IS_QLA81XX(ha) && (ha)->flags.msix_enabled)
 #define IS_FAC_REQUIRED(ha)	(IS_QLA81XX(ha) || IS_QLA83XX(ha) || \
 				IS_QLA27XX(ha))
@@ -3153,13 +3156,13 @@ struct qla_hw_data {
 /* Bit 21 of fw_attributes decides the MCTP capabilities */
 #define IS_MCTP_CAPABLE(ha)	(IS_QLA2031(ha) && \
 				((ha)->fw_attributes_ext[0] & BIT_0))
-#define IS_PI_UNINIT_CAPABLE(ha)	(IS_QLA83XX(ha))
-#define IS_PI_IPGUARD_CAPABLE(ha)	(IS_QLA83XX(ha))
+#define IS_PI_UNINIT_CAPABLE(ha)	(IS_QLA83XX(ha) || IS_QLA27XX(ha))
+#define IS_PI_IPGUARD_CAPABLE(ha)	(IS_QLA83XX(ha) || IS_QLA27XX(ha))
 #define IS_PI_DIFB_DIX0_CAPABLE(ha)	(0)
-#define IS_PI_SPLIT_DET_CAPABLE_HBA(ha)	(IS_QLA83XX(ha))
+#define IS_PI_SPLIT_DET_CAPABLE_HBA(ha)	(IS_QLA83XX(ha) || IS_QLA27XX(ha))
 #define IS_PI_SPLIT_DET_CAPABLE(ha)	(IS_PI_SPLIT_DET_CAPABLE_HBA(ha) && \
     (((ha)->fw_attributes_h << 16 | (ha)->fw_attributes) & BIT_22))
-#define IS_ATIO_MSIX_CAPABLE(ha) (IS_QLA83XX(ha))
+#define IS_ATIO_MSIX_CAPABLE(ha) (IS_QLA83XX(ha) || IS_QLA27XX(ha))
 #define IS_TGT_MODE_CAPABLE(ha)	(ha->tgt.atio_q_length)
 #define IS_SHADOW_REG_CAPABLE(ha)  (IS_QLA27XX(ha))
 #define IS_DPORT_CAPABLE(ha)  (IS_QLA83XX(ha) || IS_QLA27XX(ha))
@@ -3300,6 +3303,8 @@ struct qla_hw_data {
 #define RISC_RDY_AFT_RESET	3
 #define RISC_SRAM_DUMP_CMPL	4
 #define RISC_EXT_MEM_DUMP_CMPL	5
+#define ISP_MBX_RDY		6
+#define ISP_SOFT_RESET_CMPL	7
 	int		fw_dump_reading;
 	int		prev_minidump_failed;
 	dma_addr_t	eft_dma;
@@ -3576,6 +3581,16 @@ typedef struct scsi_qla_host {
 	uint16_t	fcoe_fcf_idx;
 	uint8_t		fcoe_vn_port_mac[6];
 
+	/* list of commands waiting on workqueue */
+	struct list_head	qla_cmd_list;
+	struct list_head	qla_sess_op_cmd_list;
+	spinlock_t		cmd_list_lock;
+
+	/* Counter to detect races between ELS and RSCN events */
+	atomic_t		generation_tick;
+	/* Time when global fcport update has been scheduled */
+	int			total_fcport_update_gen;
+
 	uint32_t	vp_abort_cnt;
 
 	struct fc_vport	*fc_vport;	/* holds fc_vport * for each vport */
@@ -3587,6 +3602,7 @@ typedef struct scsi_qla_host {
 #define VP_BIND_NEEDED		2
 #define VP_DELETE_NEEDED	3
 #define VP_SCR_NEEDED		4	/* State Change Request registration */
+#define VP_CONFIG_OK		5	/* Flag to cfg VP, if FW is ready */
 	atomic_t 		vp_state;
 #define VP_OFFLINE		0
 #define VP_ACTIVE		1

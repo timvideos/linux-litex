@@ -504,13 +504,13 @@ int region_is_ram(resource_size_t start, unsigned long size)
 {
 	struct resource *p;
 	resource_size_t end = start + size - 1;
-	int flags = IORESOURCE_MEM | IORESOURCE_BUSY;
+	unsigned long flags = IORESOURCE_MEM | IORESOURCE_BUSY;
 	const char *name = "System RAM";
 	int ret = -1;
 
 	read_lock(&resource_lock);
 	for (p = iomem_resource.child; p ; p = p->sibling) {
-		if (end < p->start)
+		if (p->end < start)
 			continue;
 
 		if (p->start <= start && end <= p->end) {
@@ -521,7 +521,7 @@ int region_is_ram(resource_size_t start, unsigned long size)
 				ret = 1;
 			break;
 		}
-		if (p->end < start)
+		if (end < p->start)
 			break;	/* not found */
 	}
 	read_unlock(&resource_lock);
@@ -1034,8 +1034,6 @@ resource_size_t resource_alignment(struct resource *res)
  *
  * request_region creates a new busy region.
  *
- * check_region returns non-zero if the area is already busy.
- *
  * release_region releases a matching busy region.
  */
 
@@ -1096,36 +1094,6 @@ struct resource * __request_region(struct resource *parent,
 	return res;
 }
 EXPORT_SYMBOL(__request_region);
-
-/**
- * __check_region - check if a resource region is busy or free
- * @parent: parent resource descriptor
- * @start: resource start address
- * @n: resource region size
- *
- * Returns 0 if the region is free at the moment it is checked,
- * returns %-EBUSY if the region is busy.
- *
- * NOTE:
- * This function is deprecated because its use is racy.
- * Even if it returns 0, a subsequent call to request_region()
- * may fail because another driver etc. just allocated the region.
- * Do NOT use it.  It will be removed from the kernel.
- */
-int __check_region(struct resource *parent, resource_size_t start,
-			resource_size_t n)
-{
-	struct resource * res;
-
-	res = __request_region(parent, start, n, "check-region", 0);
-	if (!res)
-		return -EBUSY;
-
-	release_resource(res);
-	free_resource(res);
-	return 0;
-}
-EXPORT_SYMBOL(__check_region);
 
 /**
  * __release_region - release a previously reserved resource region

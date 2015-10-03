@@ -600,9 +600,11 @@ static void iwl_pcie_rx_handle_rb(struct iwl_trans *trans,
 		if (pkt->len_n_flags == cpu_to_le32(FH_RSCSR_FRAME_INVALID))
 			break;
 
-		IWL_DEBUG_RX(trans, "cmd at offset %d: %s (0x%.2x)\n",
-			rxcb._offset, get_cmd_string(trans_pcie, pkt->hdr.cmd),
-			pkt->hdr.cmd);
+		IWL_DEBUG_RX(trans,
+			     "cmd at offset %d: %s (0x%.2x, seq 0x%x)\n",
+			     rxcb._offset,
+			     get_cmd_string(trans_pcie, pkt->hdr.cmd),
+			     pkt->hdr.cmd, le16_to_cpu(pkt->hdr.sequence));
 
 		len = iwl_rx_packet_len(pkt);
 		len += sizeof(u32); /* account for status word */
@@ -773,6 +775,7 @@ static void iwl_pcie_irq_handle_error(struct iwl_trans *trans)
 
 	/* W/A for WiFi/WiMAX coex and WiMAX own the RF */
 	if (trans->cfg->internal_wimax_coex &&
+	    !trans->cfg->apmg_not_supported &&
 	    (!(iwl_read_prph(trans, APMG_CLK_CTRL_REG) &
 			     APMS_CLK_VAL_MRB_FUNC_MODE) ||
 	     (iwl_read_prph(trans, APMG_PS_CTRL_REG) &

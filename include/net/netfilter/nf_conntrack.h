@@ -95,9 +95,8 @@ struct nf_conn {
 	/* Timer function; drops refcnt when it goes off. */
 	struct timer_list timeout;
 
-#ifdef CONFIG_NET_NS
-	struct net *ct_net;
-#endif
+	possible_net_t ct_net;
+
 	/* all members below initialized via memset */
 	u8 __nfct_init_offset[0];
 
@@ -292,7 +291,7 @@ extern unsigned int nf_conntrack_max;
 extern unsigned int nf_conntrack_hash_rnd;
 void init_nf_conntrack_hash_rnd(void);
 
-void nf_conntrack_tmpl_insert(struct net *net, struct nf_conn *tmpl);
+struct nf_conn *nf_ct_tmpl_alloc(struct net *net, u16 zone, gfp_t flags);
 
 #define NF_CT_STAT_INC(net, count)	  __this_cpu_inc((net)->ct.stat->count)
 #define NF_CT_STAT_INC_ATOMIC(net, count) this_cpu_inc((net)->ct.stat->count)
