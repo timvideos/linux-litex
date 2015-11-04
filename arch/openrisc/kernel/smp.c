@@ -16,6 +16,7 @@
 #include <asm/cpuinfo.h>
 #include <asm/mmu_context.h>
 #include <asm/tlbflush.h>
+#include <asm/cacheflush.h>
 
 volatile unsigned long secondary_release = -1;
 struct thread_info *secondary_thread_info;
@@ -223,3 +224,28 @@ void flush_tlb_range(struct vm_area_struct *vma,
 {
 	on_each_cpu(ipi_flush_tlb_all, NULL, 1);
 }
+
+/* Cache flush/invalidate operations - performed on each cpu */
+static void ipi_dcache_page_flush(void *arg)
+{
+	struct page *page = arg;
+	local_dcache_page_flush(page);
+}
+
+void smp_dcache_page_flush(struct page *page)
+{
+	on_each_cpu(ipi_dcache_page_flush, page, 1);
+}
+EXPORT_SYMBOL(smp_dcache_page_flush);
+
+static void ipi_icache_page_inv(void *arg)
+{
+	struct page *page = arg;
+	local_icache_page_inv(page);
+}
+
+void smp_icache_page_inv(struct page *page)
+{
+	on_each_cpu(ipi_icache_page_inv, page, 1);
+}
+EXPORT_SYMBOL(smp_icache_page_inv);
