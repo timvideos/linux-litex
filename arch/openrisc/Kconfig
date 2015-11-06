@@ -57,6 +57,12 @@ config WISHBONE_BUS_BIG_ENDIAN
 config GENERIC_CSUM
         def_bool y
 
+config DCACHE_WRITETHROUGH
+	bool "Have write through data caches"
+	default n
+	help
+	  Select this if your implementation features write through data caches.
+
 source "init/Kconfig"
 
 source "kernel/Kconfig.freezer"
