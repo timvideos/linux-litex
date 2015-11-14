@@ -72,12 +72,17 @@ static inline void flush_dcache_page(struct page *page)
 #define flush_cache_vmap(start, end)            do { } while (0)
 #define flush_cache_vunmap(start, end)          do { } while (0)
 
-#define copy_to_user_page(vma, page, vaddr, dst, src, len) \
-	do { \
-		memcpy(dst, src, len); \
-		flush_icache_user_range(vma, page, vaddr, len); \
+#define copy_to_user_page(vma, page, vaddr, dst, src, len)           \
+	do {                                                         \
+		memcpy(dst, src, len);                               \
+		if (vma->vm_flags & VM_EXEC) {                       \
+			if (!IS_ENABLED(CONFIG_DCACHE_WRITETHROUGH)) \
+				dcache_page_flush(page);             \
+			icache_page_inv(page);                       \
+		}                                                    \
 	} while (0)
-#define copy_from_user_page(vma, page, vaddr, dst, src, len) \
+
+#define copy_from_user_page(vma, page, vaddr, dst, src, len)         \
 	memcpy(dst, src, len)
 
 #endif /* __ASM_CACHEFLUSH_H */
