@@ -54,10 +54,7 @@ void update_cache(struct vm_area_struct *vma, unsigned long address,
 	 * must write back and invalidate any dirty pages manually. We
 	 * can skip data pages, since they will not end up in icaches.
 	 */
-	if ((vma->vm_flags & VM_EXEC) && dirty) {
-		if (!IS_ENABLED(CONFIG_DCACHE_WRITETHROUGH))
-			dcache_page_flush(page);
-		icache_page_inv(page);
-	}
+	if ((vma->vm_flags & VM_EXEC) && dirty)
+		sync_icache_dcache(page);
 }
 

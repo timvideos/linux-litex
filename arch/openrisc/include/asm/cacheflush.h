@@ -43,6 +43,17 @@ extern void smp_icache_page_inv(struct page *page);
 #endif /* CONFIG_SMP */
 
 /*
+ * Synchronizes caches. Whenever a cpu writes executable code to memory, this
+ * should be called to make sure the processor sees the newly written code.
+ */
+static inline void sync_icache_dcache(struct page *page)
+{
+	if (!IS_ENABLED(CONFIG_DCACHE_WRITETHROUGH))
+		dcache_page_flush(page);
+	icache_page_inv(page);
+}
+
+/*
  * Pages with this bit set need not be flushed/invalidated, since
  * they have not changed since last flush. New pages start with
  * PG_arch_1 not set and are therefore dirty by default.
@@ -75,11 +86,8 @@ static inline void flush_dcache_page(struct page *page)
 #define copy_to_user_page(vma, page, vaddr, dst, src, len)           \
 	do {                                                         \
 		memcpy(dst, src, len);                               \
-		if (vma->vm_flags & VM_EXEC) {                       \
-			if (!IS_ENABLED(CONFIG_DCACHE_WRITETHROUGH)) \
-				dcache_page_flush(page);             \
-			icache_page_inv(page);                       \
-		}                                                    \
+		if (vma->vm_flags & VM_EXEC)                         \
+			sync_icache_dcache(page);                    \
 	} while (0)
 
 #define copy_from_user_page(vma, page, vaddr, dst, src, len)         \
