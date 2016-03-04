@@ -107,7 +107,7 @@
 			miscintc: interrupt-controller@18060010 {
 				compatible = "qca,ar9132-misc-intc",
 					   "qca,ar7100-misc-intc";
-				reg = <0x18060010 0x4>;
+				reg = <0x18060010 0x8>;
 
 				interrupt-parent = <&cpuintc>;
 				interrupts = <6>;
@@ -115,6 +115,29 @@
 				interrupt-controller;
 				#interrupt-cells = <1>;
 			};
+
+			rst: reset-controller@1806001c {
+				compatible = "qca,ar9132-reset",
+						"qca,ar7100-reset";
+				reg = <0x1806001c 0x4>;
+
+				#reset-cells = <1>;
+			};
+		};
+
+		usb@1b000100 {
+			compatible = "qca,ar7100-ehci", "generic-ehci";
+			reg = <0x1b000100 0x100>;
+
+			interrupts = <3>;
+			resets = <&rst 5>;
+
+			has-transaction-translator;
+
+			phy-names = "usb";
+			phys = <&usb_phy>;
+
+			status = "disabled";
 		};
 
 		spi@1f000000 {
@@ -129,5 +152,16 @@
 			#address-cells = <1>;
 			#size-cells = <0>;
 		};
+	};
+
+	usb_phy: usb-phy {
+		compatible = "qca,ar7100-usb-phy";
+
+		reset-names = "usb-phy", "usb-suspend-override";
+		resets = <&rst 4>, <&rst 3>;
+
+		#phy-cells = <0>;
+
+		status = "disabled";
 	};
 };

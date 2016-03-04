@@ -31,6 +31,7 @@
 #include "amdgpu_vce.h"
 #include "amdgpu_ucode.h"
 #include "atom.h"
+#include "amd_pcie.h"
 
 #include "gmc/gmc_8_1_d.h"
 #include "gmc/gmc_8_1_sh_mask.h"
@@ -60,6 +61,7 @@
 #include "vi.h"
 #include "vi_dpm.h"
 #include "gmc_v8_0.h"
+#include "gmc_v7_0.h"
 #include "gfx_v8_0.h"
 #include "sdma_v2_4.h"
 #include "sdma_v3_0.h"
@@ -71,6 +73,7 @@
 #include "uvd_v5_0.h"
 #include "uvd_v6_0.h"
 #include "vce_v3_0.h"
+#include "amdgpu_powerplay.h"
 
 /*
  * Indirect registers accessor
@@ -203,6 +206,17 @@ static const u32 tonga_mgcg_cgcg_init[] =
 	mmHDP_XDP_CGTT_BLK_CTRL, 0xc0000fff, 0x00000104,
 };
 
+static const u32 fiji_mgcg_cgcg_init[] =
+{
+	mmCGTT_DRM_CLK_CTRL0, 0xffffffff, 0x00600100,
+	mmPCIE_INDEX, 0xffffffff, 0x0140001c,
+	mmPCIE_DATA, 0x000f0000, 0x00000000,
+	mmSMC_IND_INDEX_4, 0xffffffff, 0xC060000C,
+	mmSMC_IND_DATA_4, 0xc0000fff, 0x00000100,
+	mmCGTT_DRM_CLK_CTRL0, 0xff000fff, 0x00000100,
+	mmHDP_XDP_CGTT_BLK_CTRL, 0xc0000fff, 0x00000104,
+};
+
 static const u32 iceland_mgcg_cgcg_init[] =
 {
 	mmPCIE_INDEX, 0xffffffff, ixPCIE_CNTL2,
@@ -221,6 +235,13 @@ static const u32 cz_mgcg_cgcg_init[] =
 	mmHDP_XDP_CGTT_BLK_CTRL, 0xc0000fff, 0x00000104,
 };
 
+static const u32 stoney_mgcg_cgcg_init[] =
+{
+	mmCGTT_DRM_CLK_CTRL0, 0xffffffff, 0x00000100,
+	mmHDP_XDP_CGTT_BLK_CTRL, 0xffffffff, 0x00000104,
+	mmHDP_HOST_PATH_CNTL, 0xffffffff, 0x0f000027,
+};
+
 static void vi_init_golden_registers(struct amdgpu_device *adev)
 {
 	/* Some of the registers might be dependent on GRBM_GFX_INDEX */
@@ -232,6 +253,11 @@ static void vi_init_golden_registers(struct amdgpu_device *adev)
 						 iceland_mgcg_cgcg_init,
 						 (const u32)ARRAY_SIZE(iceland_mgcg_cgcg_init));
 		break;
+	case CHIP_FIJI:
+		amdgpu_program_register_sequence(adev,
+						 fiji_mgcg_cgcg_init,
+						 (const u32)ARRAY_SIZE(fiji_mgcg_cgcg_init));
+		break;
 	case CHIP_TONGA:
 		amdgpu_program_register_sequence(adev,
 						 tonga_mgcg_cgcg_init,
@@ -241,6 +267,11 @@ static void vi_init_golden_registers(struct amdgpu_device *adev)
 		amdgpu_program_register_sequence(adev,
 						 cz_mgcg_cgcg_init,
 						 (const u32)ARRAY_SIZE(cz_mgcg_cgcg_init));
+		break;
+	case CHIP_STONEY:
+		amdgpu_program_register_sequence(adev,
+						 stoney_mgcg_cgcg_init,
+						 (const u32)ARRAY_SIZE(stoney_mgcg_cgcg_init));
 		break;
 	default:
 		break;
@@ -261,7 +292,7 @@ static u32 vi_get_xclk(struct amdgpu_device *adev)
 	u32 reference_clock = adev->clock.spll.reference_freq;
 	u32 tmp;
 
-	if (adev->flags & AMDGPU_IS_APU)
+	if (adev->flags & AMD_IS_APU)
 		return reference_clock;
 
 	tmp = RREG32_SMC(ixCG_CLKPIN_CNTL_2);
@@ -348,6 +379,38 @@ static bool vi_read_disabled_bios(struct amdgpu_device *adev)
 	WREG32_SMC(ixROM_CNTL, rom_cntl);
 	return r;
 }
+
+static bool vi_read_bios_from_rom(struct amdgpu_device *adev,
+				  u8 *bios, u32 length_bytes)
+{
+	u32 *dw_ptr;
+	unsigned long flags;
+	u32 i, length_dw;
+
+	if (bios == NULL)
+		return false;
+	if (length_bytes == 0)
+		return false;
+	/* APU vbios image is part of sbios image */
+	if (adev->flags & AMD_IS_APU)
+		return false;
+
+	dw_ptr = (u32 *)bios;
+	length_dw = ALIGN(length_bytes, 4) / 4;
+	/* take the smc lock since we are using the smc index */
+	spin_lock_irqsave(&adev->smc_idx_lock, flags);
+	/* set rom index to 0 */
+	WREG32(mmSMC_IND_INDEX_0, ixROM_INDEX);
+	WREG32(mmSMC_IND_DATA_0, 0);
+	/* set index to data for continous read */
+	WREG32(mmSMC_IND_INDEX_0, ixROM_DATA);
+	for (i = 0; i < length_dw; i++)
+		dw_ptr[i] = RREG32(mmSMC_IND_DATA_0);
+	spin_unlock_irqrestore(&adev->smc_idx_lock, flags);
+
+	return true;
+}
+
 static struct amdgpu_allowed_register_entry tonga_allowed_read_registers[] = {
 	{mmGB_MACROTILE_MODE7, true},
 };
@@ -362,6 +425,26 @@ static struct amdgpu_allowed_register_entry cz_allowed_read_registers[] = {
 
 static struct amdgpu_allowed_register_entry vi_allowed_read_registers[] = {
 	{mmGRBM_STATUS, false},
+	{mmGRBM_STATUS2, false},
+	{mmGRBM_STATUS_SE0, false},
+	{mmGRBM_STATUS_SE1, false},
+	{mmGRBM_STATUS_SE2, false},
+	{mmGRBM_STATUS_SE3, false},
+	{mmSRBM_STATUS, false},
+	{mmSRBM_STATUS2, false},
+	{mmSRBM_STATUS3, false},
+	{mmSDMA0_STATUS_REG + SDMA0_REGISTER_OFFSET, false},
+	{mmSDMA0_STATUS_REG + SDMA1_REGISTER_OFFSET, false},
+	{mmCP_STAT, false},
+	{mmCP_STALLED_STAT1, false},
+	{mmCP_STALLED_STAT2, false},
+	{mmCP_STALLED_STAT3, false},
+	{mmCP_CPF_BUSY_STAT, false},
+	{mmCP_CPF_STALLED_STAT1, false},
+	{mmCP_CPF_STATUS, false},
+	{mmCP_CPC_BUSY_STAT, false},
+	{mmCP_CPC_STALLED_STAT1, false},
+	{mmCP_CPC_STATUS, false},
 	{mmGB_ADDR_CONFIG, false},
 	{mmMC_ARB_RAMCFG, false},
 	{mmGB_TILE_MODE0, false},
@@ -449,8 +532,10 @@ static int vi_read_register(struct amdgpu_device *adev, u32 se_num,
 		asic_register_table = tonga_allowed_read_registers;
 		size = ARRAY_SIZE(tonga_allowed_read_registers);
 		break;
+	case CHIP_FIJI:
 	case CHIP_TONGA:
 	case CHIP_CARRIZO:
+	case CHIP_STONEY:
 		asic_register_table = cz_allowed_read_registers;
 		size = ARRAY_SIZE(cz_allowed_read_registers);
 		break;
@@ -506,8 +591,10 @@ static void vi_print_gpu_status_regs(struct amdgpu_device *adev)
 		RREG32(mmSRBM_STATUS2));
 	dev_info(adev->dev, "  SDMA0_STATUS_REG   = 0x%08X\n",
 		RREG32(mmSDMA0_STATUS_REG + SDMA0_REGISTER_OFFSET));
-	dev_info(adev->dev, "  SDMA1_STATUS_REG   = 0x%08X\n",
-		 RREG32(mmSDMA0_STATUS_REG + SDMA1_REGISTER_OFFSET));
+	if (adev->sdma.num_instances > 1) {
+		dev_info(adev->dev, "  SDMA1_STATUS_REG   = 0x%08X\n",
+			RREG32(mmSDMA0_STATUS_REG + SDMA1_REGISTER_OFFSET));
+	}
 	dev_info(adev->dev, "  CP_STAT = 0x%08x\n", RREG32(mmCP_STAT));
 	dev_info(adev->dev, "  CP_STALLED_STAT1 = 0x%08x\n",
 		 RREG32(mmCP_STALLED_STAT1));
@@ -602,9 +689,11 @@ u32 vi_gpu_check_soft_reset(struct amdgpu_device *adev)
 		reset_mask |= AMDGPU_RESET_DMA;
 
 	/* SDMA1_STATUS_REG */
-	tmp = RREG32(mmSDMA0_STATUS_REG + SDMA1_REGISTER_OFFSET);
-	if (!(tmp & SDMA0_STATUS_REG__IDLE_MASK))
-		reset_mask |= AMDGPU_RESET_DMA1;
+	if (adev->sdma.num_instances > 1) {
+		tmp = RREG32(mmSDMA0_STATUS_REG + SDMA1_REGISTER_OFFSET);
+		if (!(tmp & SDMA0_STATUS_REG__IDLE_MASK))
+			reset_mask |= AMDGPU_RESET_DMA1;
+	}
 #if 0
 	/* VCE_STATUS */
 	if (adev->asic_type != CHIP_TOPAZ) {
@@ -751,7 +840,7 @@ static void vi_gpu_soft_reset(struct amdgpu_device *adev, u32 reset_mask)
 		srbm_soft_reset =
 			REG_SET_FIELD(srbm_soft_reset, SRBM_SOFT_RESET, SOFT_RESET_VCE1, 1);
 
-	if (!(adev->flags & AMDGPU_IS_APU)) {
+	if (!(adev->flags & AMD_IS_APU)) {
 		if (reset_mask & AMDGPU_RESET_MC)
 		srbm_soft_reset =
 			REG_SET_FIELD(srbm_soft_reset, SRBM_SOFT_RESET, SOFT_RESET_MC, 1);
@@ -965,20 +1054,17 @@ static int vi_set_vce_clocks(struct amdgpu_device *adev, u32 evclk, u32 ecclk)
 
 static void vi_pcie_gen3_enable(struct amdgpu_device *adev)
 {
-	u32 mask;
-	int ret;
+	if (pci_is_root_bus(adev->pdev->bus))
+		return;
 
 	if (amdgpu_pcie_gen2 == 0)
 		return;
 
-	if (adev->flags & AMDGPU_IS_APU)
+	if (adev->flags & AMD_IS_APU)
 		return;
 
-	ret = drm_pcie_get_speed_cap_mask(adev->ddev, &mask);
-	if (ret != 0)
-		return;
-
-	if (!(mask & (DRM_PCIE_SPEED_50 | DRM_PCIE_SPEED_80)))
+	if (!(adev->pm.pcie_gen_mask & (CAIL_PCIE_LINK_SPEED_SUPPORT_GEN2 |
+					CAIL_PCIE_LINK_SPEED_SUPPORT_GEN3)))
 		return;
 
 	/* todo */
@@ -999,7 +1085,7 @@ static void vi_enable_doorbell_aperture(struct amdgpu_device *adev,
 	u32 tmp;
 
 	/* not necessary on CZ */
-	if (adev->flags & AMDGPU_IS_APU)
+	if (adev->flags & AMD_IS_APU)
 		return;
 
 	tmp = RREG32(mmBIF_DOORBELL_APER_EN);
@@ -1024,10 +1110,10 @@ static const struct amdgpu_ip_block_version topaz_ip_blocks[] =
 	},
 	{
 		.type = AMD_IP_BLOCK_TYPE_GMC,
-		.major = 8,
-		.minor = 0,
+		.major = 7,
+		.minor = 4,
 		.rev = 0,
-		.funcs = &gmc_v8_0_ip_funcs,
+		.funcs = &gmc_v7_0_ip_funcs,
 	},
 	{
 		.type = AMD_IP_BLOCK_TYPE_IH,
@@ -1041,7 +1127,7 @@ static const struct amdgpu_ip_block_version topaz_ip_blocks[] =
 		.major = 7,
 		.minor = 1,
 		.rev = 0,
-		.funcs = &iceland_dpm_ip_funcs,
+		.funcs = &amdgpu_pp_ip_funcs,
 	},
 	{
 		.type = AMD_IP_BLOCK_TYPE_GFX,
@@ -1088,7 +1174,7 @@ static const struct amdgpu_ip_block_version tonga_ip_blocks[] =
 		.major = 7,
 		.minor = 1,
 		.rev = 0,
-		.funcs = &tonga_dpm_ip_funcs,
+		.funcs = &amdgpu_pp_ip_funcs,
 	},
 	{
 		.type = AMD_IP_BLOCK_TYPE_DCE,
@@ -1117,6 +1203,74 @@ static const struct amdgpu_ip_block_version tonga_ip_blocks[] =
 		.minor = 0,
 		.rev = 0,
 		.funcs = &uvd_v5_0_ip_funcs,
+	},
+	{
+		.type = AMD_IP_BLOCK_TYPE_VCE,
+		.major = 3,
+		.minor = 0,
+		.rev = 0,
+		.funcs = &vce_v3_0_ip_funcs,
+	},
+};
+
+static const struct amdgpu_ip_block_version fiji_ip_blocks[] =
+{
+	/* ORDER MATTERS! */
+	{
+		.type = AMD_IP_BLOCK_TYPE_COMMON,
+		.major = 2,
+		.minor = 0,
+		.rev = 0,
+		.funcs = &vi_common_ip_funcs,
+	},
+	{
+		.type = AMD_IP_BLOCK_TYPE_GMC,
+		.major = 8,
+		.minor = 5,
+		.rev = 0,
+		.funcs = &gmc_v8_0_ip_funcs,
+	},
+	{
+		.type = AMD_IP_BLOCK_TYPE_IH,
+		.major = 3,
+		.minor = 0,
+		.rev = 0,
+		.funcs = &tonga_ih_ip_funcs,
+	},
+	{
+		.type = AMD_IP_BLOCK_TYPE_SMC,
+		.major = 7,
+		.minor = 1,
+		.rev = 0,
+		.funcs = &amdgpu_pp_ip_funcs,
+	},
+	{
+		.type = AMD_IP_BLOCK_TYPE_DCE,
+		.major = 10,
+		.minor = 1,
+		.rev = 0,
+		.funcs = &dce_v10_0_ip_funcs,
+	},
+	{
+		.type = AMD_IP_BLOCK_TYPE_GFX,
+		.major = 8,
+		.minor = 0,
+		.rev = 0,
+		.funcs = &gfx_v8_0_ip_funcs,
+	},
+	{
+		.type = AMD_IP_BLOCK_TYPE_SDMA,
+		.major = 3,
+		.minor = 0,
+		.rev = 0,
+		.funcs = &sdma_v3_0_ip_funcs,
+	},
+	{
+		.type = AMD_IP_BLOCK_TYPE_UVD,
+		.major = 6,
+		.minor = 0,
+		.rev = 0,
+		.funcs = &uvd_v6_0_ip_funcs,
 	},
 	{
 		.type = AMD_IP_BLOCK_TYPE_VCE,
@@ -1156,7 +1310,7 @@ static const struct amdgpu_ip_block_version cz_ip_blocks[] =
 		.major = 8,
 		.minor = 0,
 		.rev = 0,
-		.funcs = &cz_dpm_ip_funcs,
+		.funcs = &amdgpu_pp_ip_funcs
 	},
 	{
 		.type = AMD_IP_BLOCK_TYPE_DCE,
@@ -1202,11 +1356,16 @@ int vi_set_ip_blocks(struct amdgpu_device *adev)
 		adev->ip_blocks = topaz_ip_blocks;
 		adev->num_ip_blocks = ARRAY_SIZE(topaz_ip_blocks);
 		break;
+	case CHIP_FIJI:
+		adev->ip_blocks = fiji_ip_blocks;
+		adev->num_ip_blocks = ARRAY_SIZE(fiji_ip_blocks);
+		break;
 	case CHIP_TONGA:
 		adev->ip_blocks = tonga_ip_blocks;
 		adev->num_ip_blocks = ARRAY_SIZE(tonga_ip_blocks);
 		break;
 	case CHIP_CARRIZO:
+	case CHIP_STONEY:
 		adev->ip_blocks = cz_ip_blocks;
 		adev->num_ip_blocks = ARRAY_SIZE(cz_ip_blocks);
 		break;
@@ -1218,19 +1377,24 @@ int vi_set_ip_blocks(struct amdgpu_device *adev)
 	return 0;
 }
 
+#define ATI_REV_ID_FUSE_MACRO__ADDRESS      0xC0014044
+#define ATI_REV_ID_FUSE_MACRO__SHIFT        9
+#define ATI_REV_ID_FUSE_MACRO__MASK         0x00001E00
+
 static uint32_t vi_get_rev_id(struct amdgpu_device *adev)
 {
-	if (adev->asic_type == CHIP_TOPAZ)
+	if (adev->flags & AMD_IS_APU)
+		return (RREG32_SMC(ATI_REV_ID_FUSE_MACRO__ADDRESS) & ATI_REV_ID_FUSE_MACRO__MASK)
+			>> ATI_REV_ID_FUSE_MACRO__SHIFT;
+	else
 		return (RREG32(mmPCIE_EFUSE4) & PCIE_EFUSE4__STRAP_BIF_ATI_REV_ID_MASK)
 			>> PCIE_EFUSE4__STRAP_BIF_ATI_REV_ID__SHIFT;
-	else
-		return (RREG32(mmCC_DRM_ID_STRAPS) & CC_DRM_ID_STRAPS__ATI_REV_ID_MASK)
-			>> CC_DRM_ID_STRAPS__ATI_REV_ID__SHIFT;
 }
 
 static const struct amdgpu_asic_funcs vi_asic_funcs =
 {
 	.read_disabled_bios = &vi_read_disabled_bios,
+	.read_bios_from_rom = &vi_read_bios_from_rom,
 	.read_register = &vi_read_register,
 	.reset = &vi_asic_reset,
 	.set_vga_state = &vi_vga_set_state,
@@ -1248,7 +1412,7 @@ static int vi_common_early_init(void *handle)
 	bool smc_enabled = false;
 	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 
-	if (adev->flags & AMDGPU_IS_APU) {
+	if (adev->flags & AMD_IS_APU) {
 		adev->smc_rreg = &cz_smc_rreg;
 		adev->smc_wreg = &cz_smc_wreg;
 	} else {
@@ -1276,29 +1440,35 @@ static int vi_common_early_init(void *handle)
 		adev->cg_flags = 0;
 		adev->pg_flags = 0;
 		adev->external_rev_id = 0x1;
-		if (amdgpu_smc_load_fw && smc_enabled)
-			adev->firmware.smu_load = true;
+		break;
+	case CHIP_FIJI:
+		adev->has_uvd = true;
+		adev->cg_flags = 0;
+		adev->pg_flags = 0;
+		adev->external_rev_id = adev->rev_id + 0x3c;
 		break;
 	case CHIP_TONGA:
 		adev->has_uvd = true;
 		adev->cg_flags = 0;
 		adev->pg_flags = 0;
 		adev->external_rev_id = adev->rev_id + 0x14;
-		if (amdgpu_smc_load_fw && smc_enabled)
-			adev->firmware.smu_load = true;
 		break;
 	case CHIP_CARRIZO:
+	case CHIP_STONEY:
 		adev->has_uvd = true;
 		adev->cg_flags = 0;
-		adev->pg_flags = AMDGPU_PG_SUPPORT_UVD | AMDGPU_PG_SUPPORT_VCE;
+		adev->pg_flags = 0;
 		adev->external_rev_id = adev->rev_id + 0x1;
-		if (amdgpu_smc_load_fw && smc_enabled)
-			adev->firmware.smu_load = true;
 		break;
 	default:
 		/* FIXME: not supported yet */
 		return -EINVAL;
 	}
+
+	if (amdgpu_smc_load_fw && smc_enabled)
+		adev->firmware.smu_load = true;
+
+	amdgpu_get_pcie_info(adev);
 
 	return 0;
 }
@@ -1373,9 +1543,95 @@ static int vi_common_soft_reset(void *handle)
 	return 0;
 }
 
+static void fiji_update_bif_medium_grain_light_sleep(struct amdgpu_device *adev,
+		bool enable)
+{
+	uint32_t temp, data;
+
+	temp = data = RREG32_PCIE(ixPCIE_CNTL2);
+
+	if (enable)
+		data |= PCIE_CNTL2__SLV_MEM_LS_EN_MASK |
+				PCIE_CNTL2__MST_MEM_LS_EN_MASK |
+				PCIE_CNTL2__REPLAY_MEM_LS_EN_MASK;
+	else
+		data &= ~(PCIE_CNTL2__SLV_MEM_LS_EN_MASK |
+				PCIE_CNTL2__MST_MEM_LS_EN_MASK |
+				PCIE_CNTL2__REPLAY_MEM_LS_EN_MASK);
+
+	if (temp != data)
+		WREG32_PCIE(ixPCIE_CNTL2, data);
+}
+
+static void fiji_update_hdp_medium_grain_clock_gating(struct amdgpu_device *adev,
+		bool enable)
+{
+	uint32_t temp, data;
+
+	temp = data = RREG32(mmHDP_HOST_PATH_CNTL);
+
+	if (enable)
+		data &= ~HDP_HOST_PATH_CNTL__CLOCK_GATING_DIS_MASK;
+	else
+		data |= HDP_HOST_PATH_CNTL__CLOCK_GATING_DIS_MASK;
+
+	if (temp != data)
+		WREG32(mmHDP_HOST_PATH_CNTL, data);
+}
+
+static void fiji_update_hdp_light_sleep(struct amdgpu_device *adev,
+		bool enable)
+{
+	uint32_t temp, data;
+
+	temp = data = RREG32(mmHDP_MEM_POWER_LS);
+
+	if (enable)
+		data |= HDP_MEM_POWER_LS__LS_ENABLE_MASK;
+	else
+		data &= ~HDP_MEM_POWER_LS__LS_ENABLE_MASK;
+
+	if (temp != data)
+		WREG32(mmHDP_MEM_POWER_LS, data);
+}
+
+static void fiji_update_rom_medium_grain_clock_gating(struct amdgpu_device *adev,
+		bool enable)
+{
+	uint32_t temp, data;
+
+	temp = data = RREG32_SMC(ixCGTT_ROM_CLK_CTRL0);
+
+	if (enable)
+		data &= ~(CGTT_ROM_CLK_CTRL0__SOFT_OVERRIDE0_MASK |
+				CGTT_ROM_CLK_CTRL0__SOFT_OVERRIDE1_MASK);
+	else
+		data |= CGTT_ROM_CLK_CTRL0__SOFT_OVERRIDE0_MASK |
+				CGTT_ROM_CLK_CTRL0__SOFT_OVERRIDE1_MASK;
+
+	if (temp != data)
+		WREG32_SMC(ixCGTT_ROM_CLK_CTRL0, data);
+}
+
 static int vi_common_set_clockgating_state(void *handle,
 					    enum amd_clockgating_state state)
 {
+	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
+
+	switch (adev->asic_type) {
+	case CHIP_FIJI:
+		fiji_update_bif_medium_grain_light_sleep(adev,
+				state == AMD_CG_STATE_GATE ? true : false);
+		fiji_update_hdp_medium_grain_clock_gating(adev,
+				state == AMD_CG_STATE_GATE ? true : false);
+		fiji_update_hdp_light_sleep(adev,
+				state == AMD_CG_STATE_GATE ? true : false);
+		fiji_update_rom_medium_grain_clock_gating(adev,
+				state == AMD_CG_STATE_GATE ? true : false);
+		break;
+	default:
+		break;
+	}
 	return 0;
 }
 

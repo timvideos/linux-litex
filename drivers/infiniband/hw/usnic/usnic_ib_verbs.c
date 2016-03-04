@@ -1,9 +1,24 @@
 /*
  * Copyright (c) 2013, Cisco Systems, Inc. All rights reserved.
  *
- * This program is free software; you may redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
+ * This software is available to you under a choice of one of two
+ * licenses.  You may choose to be licensed under the terms of the GNU
+ * General Public License (GPL) Version 2, available from the file
+ * COPYING in the main directory of this source tree, or the
+ * BSD license below:
+ *
+ *     Redistribution and use in source and binary forms, with or
+ *     without modification, are permitted provided that the following
+ *     conditions are met:
+ *
+ *      - Redistributions of source code must retain the above
+ *        copyright notice, this list of conditions and the following
+ *        disclaimer.
+ *
+ *      - Redistributions in binary form must reproduce the above
+ *        copyright notice, this list of conditions and the following
+ *        disclaimer in the documentation and/or other materials
+ *        provided with the distribution.
  *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
  * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
@@ -36,7 +51,7 @@
 
 static void usnic_ib_fw_string_to_u64(char *fw_ver_str, u64 *fw_ver)
 {
-	*fw_ver = (u64) *fw_ver_str;
+	*fw_ver = *((u64 *)fw_ver_str);
 }
 
 static int usnic_ib_fill_create_qp_resp(struct usnic_ib_qp_grp *qp_grp,
@@ -556,20 +571,20 @@ int usnic_ib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 
 	qp_grp = to_uqp_grp(ibqp);
 
-	/* TODO: Future Support All States */
 	mutex_lock(&qp_grp->vf->pf->usdev_lock);
-	if ((attr_mask & IB_QP_STATE) && attr->qp_state == IB_QPS_INIT) {
-		status = usnic_ib_qp_grp_modify(qp_grp, IB_QPS_INIT, NULL);
-	} else if ((attr_mask & IB_QP_STATE) && attr->qp_state == IB_QPS_RTR) {
-		status = usnic_ib_qp_grp_modify(qp_grp, IB_QPS_RTR, NULL);
-	} else if ((attr_mask & IB_QP_STATE) && attr->qp_state == IB_QPS_RTS) {
-		status = usnic_ib_qp_grp_modify(qp_grp, IB_QPS_RTS, NULL);
+	if ((attr_mask & IB_QP_PORT) && attr->port_num != 1) {
+		/* usnic devices only have one port */
+		status = -EINVAL;
+		goto out_unlock;
+	}
+	if (attr_mask & IB_QP_STATE) {
+		status = usnic_ib_qp_grp_modify(qp_grp, attr->qp_state, NULL);
 	} else {
-		usnic_err("Unexpected combination mask: %u state: %u\n",
-				attr_mask & IB_QP_STATE, attr->qp_state);
+		usnic_err("Unhandled request, attr_mask=0x%x\n", attr_mask);
 		status = -EINVAL;
 	}
 
+out_unlock:
 	mutex_unlock(&qp_grp->vf->pf->usdev_lock);
 	return status;
 }
@@ -610,8 +625,8 @@ struct ib_mr *usnic_ib_reg_mr(struct ib_pd *pd, u64 start, u64 length,
 			virt_addr, length);
 
 	mr = kzalloc(sizeof(*mr), GFP_KERNEL);
-	if (IS_ERR_OR_NULL(mr))
-		return ERR_PTR(mr ? PTR_ERR(mr) : -ENOMEM);
+	if (!mr)
+		return ERR_PTR(-ENOMEM);
 
 	mr->umem = usnic_uiom_reg_get(to_upd(pd)->umem_pd, start, length,
 					access_flags, 0);

@@ -281,7 +281,7 @@ static int yama_ptrace_access_check(struct task_struct *child,
 	int rc = 0;
 
 	/* require ptrace target be a child of ptracer on attach */
-	if (mode == PTRACE_MODE_ATTACH) {
+	if (mode & PTRACE_MODE_ATTACH) {
 		switch (ptrace_scope) {
 		case YAMA_SCOPE_DISABLED:
 			/* No additional restrictions. */
@@ -307,7 +307,7 @@ static int yama_ptrace_access_check(struct task_struct *child,
 		}
 	}
 
-	if (rc) {
+	if (rc && (mode & PTRACE_MODE_NOAUDIT) == 0) {
 		printk_ratelimited(KERN_NOTICE
 			"ptrace of pid %d was attempted by: %s (pid %d)\n",
 			child->pid, current->comm, current->pid);
@@ -353,11 +353,6 @@ static struct security_hook_list yama_hooks[] = {
 	LSM_HOOK_INIT(task_free, yama_task_free),
 };
 
-void __init yama_add_hooks(void)
-{
-	security_add_hooks(yama_hooks, ARRAY_SIZE(yama_hooks));
-}
-
 #ifdef CONFIG_SYSCTL
 static int yama_dointvec_minmax(struct ctl_table *table, int write,
 				void __user *buffer, size_t *lenp, loff_t *ppos)
@@ -396,26 +391,18 @@ static struct ctl_table yama_sysctl_table[] = {
 	},
 	{ }
 };
-#endif /* CONFIG_SYSCTL */
-
-static __init int yama_init(void)
+static void __init yama_init_sysctl(void)
 {
-#ifndef CONFIG_SECURITY_YAMA_STACKED
-	/*
-	 * If yama is being stacked this is already taken care of.
-	 */
-	if (!security_module_enable("yama"))
-		return 0;
-	yama_add_hooks();
-#endif
-	pr_info("Yama: becoming mindful.\n");
-
-#ifdef CONFIG_SYSCTL
 	if (!register_sysctl_paths(yama_sysctl_path, yama_sysctl_table))
 		panic("Yama: sysctl registration failed.\n");
-#endif
-
-	return 0;
 }
+#else
+static inline void yama_init_sysctl(void) { }
+#endif /* CONFIG_SYSCTL */
 
-security_initcall(yama_init);
+void __init yama_add_hooks(void)
+{
+	pr_info("Yama: becoming mindful.\n");
+	security_add_hooks(yama_hooks, ARRAY_SIZE(yama_hooks));
+	yama_init_sysctl();
+}

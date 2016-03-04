@@ -272,21 +272,26 @@
 /* ADMA2 32-bit DMA descriptor size */
 #define SDHCI_ADMA2_32_DESC_SZ	8
 
-/* ADMA2 32-bit DMA alignment */
-#define SDHCI_ADMA2_32_ALIGN	4
-
 /* ADMA2 32-bit descriptor */
 struct sdhci_adma2_32_desc {
 	__le16	cmd;
 	__le16	len;
 	__le32	addr;
-}  __packed __aligned(SDHCI_ADMA2_32_ALIGN);
+}  __packed __aligned(4);
+
+/* ADMA2 data alignment */
+#define SDHCI_ADMA2_ALIGN	4
+#define SDHCI_ADMA2_MASK	(SDHCI_ADMA2_ALIGN - 1)
+
+/*
+ * ADMA2 descriptor alignment.  Some controllers (e.g. Intel) require 8 byte
+ * alignment for the descriptor table even in 32-bit DMA mode.  Memory
+ * allocation is at least 8 byte aligned anyway, so just stipulate 8 always.
+ */
+#define SDHCI_ADMA2_DESC_ALIGN	8
 
 /* ADMA2 64-bit DMA descriptor size */
 #define SDHCI_ADMA2_64_DESC_SZ	12
-
-/* ADMA2 64-bit DMA alignment */
-#define SDHCI_ADMA2_64_ALIGN	8
 
 /*
  * ADMA2 64-bit descriptor. Note 12-byte descriptor can't always be 8-byte
@@ -309,9 +314,10 @@ struct sdhci_adma2_64_desc {
  */
 #define SDHCI_MAX_SEGS		128
 
-struct sdhci_host_next {
-	unsigned int	sg_count;
-	s32		cookie;
+enum sdhci_cookie {
+	COOKIE_UNMAPPED,
+	COOKIE_MAPPED,
+	COOKIE_GIVEN,
 };
 
 struct sdhci_host {
@@ -409,6 +415,13 @@ struct sdhci_host {
 #define SDHCI_QUIRK2_SUPPORT_SINGLE			(1<<13)
 /* Controller broken with using ACMD23 */
 #define SDHCI_QUIRK2_ACMD23_BROKEN			(1<<14)
+/* Broken Clock divider zero in controller */
+#define SDHCI_QUIRK2_CLOCK_DIV_ZERO_BROKEN		(1<<15)
+/*
+ * When internal clock is disabled, a delay is needed before modifying the
+ * SD clock frequency or enabling back the internal clock.
+ */
+#define SDHCI_QUIRK2_NEED_DELAY_AFTER_INT_CLK_RST	(1<<16)
 
 	int irq;		/* Device IRQ */
 	void __iomem *ioaddr;	/* Mapped address */
@@ -417,6 +430,7 @@ struct sdhci_host {
 
 	/* Internal data */
 	struct mmc_host *mmc;	/* MMC structure */
+	struct mmc_host_ops mmc_host_ops;	/* MMC host ops */
 	u64 dma_mask;		/* custom DMA mask */
 
 #if defined(CONFIG_LEDS_CLASS) || defined(CONFIG_LEDS_CLASS_MODULE)
@@ -474,8 +488,6 @@ struct sdhci_host {
 	dma_addr_t align_addr;	/* Mapped bounce buffer */
 
 	unsigned int desc_sz;	/* ADMA descriptor size */
-	unsigned int align_sz;	/* ADMA alignment */
-	unsigned int align_mask;	/* ADMA alignment mask */
 
 	struct tasklet_struct finish_tasklet;	/* Tasklet structures */
 
@@ -503,7 +515,6 @@ struct sdhci_host {
 	unsigned int		tuning_mode;	/* Re-tuning mode supported by host */
 #define SDHCI_TUNING_MODE_1	0
 
-	struct sdhci_host_next	next_data;
 	unsigned long private[0] ____cacheline_aligned;
 };
 

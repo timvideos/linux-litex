@@ -15,7 +15,6 @@
 
 #include <dt-bindings/clock/exynos5420.h>
 #include "exynos5.dtsi"
-#include "exynos5420-pinctrl.dtsi"
 
 #include <dt-bindings/clock/exynos-audss-clk.h>
 
@@ -718,6 +717,15 @@
 		iommus = <&sysmmu_tv>;
 	};
 
+	rotator: rotator@11C00000 {
+		compatible = "samsung,exynos5250-rotator";
+		reg = <0x11C00000 0x64>;
+		interrupts = <0 84 0>;
+		clocks = <&clock CLK_ROTATOR>;
+		clock-names = "rotator";
+		iommus = <&sysmmu_rotator>;
+	};
+
 	gsc_0: video-scaler@13e00000 {
 		compatible = "samsung,exynos5-gsc";
 		reg = <0x13e00000 0x1000>;
@@ -1060,6 +1068,16 @@
 		#iommu-cells = <0>;
 	};
 
+	sysmmu_rotator: sysmmu@0x11D40000 {
+		compatible = "samsung,exynos-sysmmu";
+		reg = <0x11D40000 0x1000>;
+		interrupt-parent = <&combiner>;
+		interrupts = <4 0>;
+		clock-names = "sysmmu", "master";
+		clocks = <&clock CLK_SMMU_ROTATOR>, <&clock CLK_ROTATOR>;
+		#iommu-cells = <0>;
+	};
+
 	sysmmu_jpeg0: sysmmu@0x11F10000 {
 		compatible = "samsung,exynos-sysmmu";
 		reg = <0x11F10000 0x1000>;
@@ -1118,7 +1136,7 @@
 		interrupt-parent = <&combiner>;
 		interrupts = <3 0>;
 		clock-names = "sysmmu", "master";
-		clocks = <&clock CLK_SMMU_FIMD1M0>, <&clock CLK_FIMD1>;
+		clocks = <&clock CLK_SMMU_FIMD1M1>, <&clock CLK_FIMD1>;
 		power-domains = <&disp_pd>;
 		#iommu-cells = <0>;
 	};
@@ -1166,3 +1184,5 @@
 	clocks = <&clock CLK_UART3>, <&clock CLK_SCLK_UART3>;
 	clock-names = "uart", "clk_uart_baud0";
 };
+
+#include "exynos5420-pinctrl.dtsi"

@@ -33,7 +33,13 @@
 #include <linux/ip.h>
 #include <linux/ipv6.h>
 #include <linux/tcp.h>
+#include <net/busy_poll.h>
 #include "en.h"
+
+static inline bool mlx5e_rx_hw_stamp(struct mlx5e_tstamp *tstamp)
+{
+	return tstamp->hwtstamp_config.rx_filter == HWTSTAMP_FILTER_ALL;
+}
 
 static inline int mlx5e_alloc_rx_wqe(struct mlx5e_rq *rq,
 				     struct mlx5e_rx_wqe *wqe, u16 ix)
@@ -111,10 +117,12 @@ static void mlx5e_lro_update_hdr(struct sk_buff *skb, struct mlx5_cqe64 *cqe)
 		tcp = (struct tcphdr *)(skb->data + ETH_HLEN +
 					sizeof(struct iphdr));
 		ipv6 = NULL;
+		skb_shinfo(skb)->gso_type = SKB_GSO_TCPV4;
 	} else {
 		tcp = (struct tcphdr *)(skb->data + ETH_HLEN +
 					sizeof(struct ipv6hdr));
 		ipv4 = NULL;
+		skb_shinfo(skb)->gso_type = SKB_GSO_TCPV6;
 	}
 
 	if (get_cqe_lro_tcppsh(cqe))
@@ -149,12 +157,45 @@ static inline void mlx5e_skb_set_hash(struct mlx5_cqe64 *cqe,
 	skb_set_hash(skb, be32_to_cpu(cqe->rss_hash_result), ht);
 }
 
+static inline bool is_first_ethertype_ip(struct sk_buff *skb)
+{
+	__be16 ethertype = ((struct ethhdr *)skb->data)->h_proto;
+
+	return (ethertype == htons(ETH_P_IP) || ethertype == htons(ETH_P_IPV6));
+}
+
+static inline void mlx5e_handle_csum(struct net_device *netdev,
+				     struct mlx5_cqe64 *cqe,
+				     struct mlx5e_rq *rq,
+				     struct sk_buff *skb)
+{
+	if (unlikely(!(netdev->features & NETIF_F_RXCSUM)))
+		goto csum_none;
+
+	if (likely(cqe->hds_ip_ext & CQE_L4_OK)) {
+		skb->ip_summed = CHECKSUM_UNNECESSARY;
+	} else if (is_first_ethertype_ip(skb)) {
+		skb->ip_summed = CHECKSUM_COMPLETE;
+		skb->csum = csum_unfold((__force __sum16)cqe->check_sum);
+		rq->stats.csum_sw++;
+	} else {
+		goto csum_none;
+	}
+
+	return;
+
+csum_none:
+	skb->ip_summed = CHECKSUM_NONE;
+	rq->stats.csum_none++;
+}
+
 static inline void mlx5e_build_rx_skb(struct mlx5_cqe64 *cqe,
 				      struct mlx5e_rq *rq,
 				      struct sk_buff *skb)
 {
 	struct net_device *netdev = rq->netdev;
 	u32 cqe_bcnt = be32_to_cpu(cqe->byte_cnt);
+	struct mlx5e_tstamp *tstamp = rq->tstamp;
 	int lro_num_seg;
 
 	skb_put(skb, cqe_bcnt);
@@ -162,20 +203,15 @@ static inline void mlx5e_build_rx_skb(struct mlx5_cqe64 *cqe,
 	lro_num_seg = be32_to_cpu(cqe->srqn) >> 24;
 	if (lro_num_seg > 1) {
 		mlx5e_lro_update_hdr(skb, cqe);
-		skb_shinfo(skb)->gso_size = MLX5E_PARAMS_DEFAULT_LRO_WQE_SZ;
+		skb_shinfo(skb)->gso_size = DIV_ROUND_UP(cqe_bcnt, lro_num_seg);
 		rq->stats.lro_packets++;
 		rq->stats.lro_bytes += cqe_bcnt;
 	}
 
-	if (likely(netdev->features & NETIF_F_RXCSUM) &&
-	    (cqe->hds_ip_ext & CQE_L2_OK) &&
-	    (cqe->hds_ip_ext & CQE_L3_OK) &&
-	    (cqe->hds_ip_ext & CQE_L4_OK)) {
-		skb->ip_summed = CHECKSUM_UNNECESSARY;
-	} else {
-		skb->ip_summed = CHECKSUM_NONE;
-		rq->stats.csum_none++;
-	}
+	if (unlikely(mlx5e_rx_hw_stamp(tstamp)))
+		mlx5e_fill_hwstamp(tstamp, get_cqe_ts(cqe), skb_hwtstamps(skb));
+
+	mlx5e_handle_csum(netdev, cqe, rq, skb);
 
 	skb->protocol = eth_type_trans(skb, netdev);
 
@@ -189,16 +225,16 @@ static inline void mlx5e_build_rx_skb(struct mlx5_cqe64 *cqe,
 				       be16_to_cpu(cqe->vlan_info));
 }
 
-bool mlx5e_poll_rx_cq(struct mlx5e_cq *cq, int budget)
+int mlx5e_poll_rx_cq(struct mlx5e_cq *cq, int budget)
 {
 	struct mlx5e_rq *rq = container_of(cq, struct mlx5e_rq, cq);
-	int i;
+	int work_done;
 
 	/* avoid accessing cq (dma coherent memory) if not needed */
 	if (!test_and_clear_bit(MLX5E_CQ_HAS_CQES, &cq->flags))
-		return false;
+		return 0;
 
-	for (i = 0; i < budget; i++) {
+	for (work_done = 0; work_done < budget; work_done++) {
 		struct mlx5e_rx_wqe *wqe;
 		struct mlx5_cqe64 *cqe;
 		struct sk_buff *skb;
@@ -243,10 +279,8 @@ wq_ll_pop:
 	/* ensure cq space is freed before enabling more cqes */
 	wmb();
 
-	if (i == budget) {
+	if (work_done == budget)
 		set_bit(MLX5E_CQ_HAS_CQES, &cq->flags);
-		return true;
-	}
 
-	return false;
+	return work_done;
 }

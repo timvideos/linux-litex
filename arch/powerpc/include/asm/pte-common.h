@@ -40,6 +40,11 @@
 #else
 #define _PAGE_RW 0
 #endif
+
+#ifndef _PAGE_PTE
+#define _PAGE_PTE 0
+#endif
+
 #ifndef _PMD_PRESENT_MASK
 #define _PMD_PRESENT_MASK	_PMD_PRESENT
 #endif
@@ -109,7 +114,8 @@ extern unsigned long bad_call_to_PMD_PAGE_SIZE(void);
  * the processor might need it for DMA coherency.
  */
 #define _PAGE_BASE_NC	(_PAGE_PRESENT | _PAGE_ACCESSED | _PAGE_PSIZE)
-#if defined(CONFIG_SMP) || defined(CONFIG_PPC_STD_MMU)
+#if defined(CONFIG_SMP) || defined(CONFIG_PPC_STD_MMU) || \
+	defined(CONFIG_PPC_E500MC)
 #define _PAGE_BASE	(_PAGE_BASE_NC | _PAGE_COHERENT)
 #else
 #define _PAGE_BASE	(_PAGE_BASE_NC)

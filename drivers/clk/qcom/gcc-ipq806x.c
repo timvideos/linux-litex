@@ -188,7 +188,7 @@ static const struct parent_map gcc_pxo_pll8_map[] = {
 	{ P_PLL8, 3 }
 };
 
-static const char *gcc_pxo_pll8[] = {
+static const char * const gcc_pxo_pll8[] = {
 	"pxo",
 	"pll8_vote",
 };
@@ -199,7 +199,7 @@ static const struct parent_map gcc_pxo_pll8_cxo_map[] = {
 	{ P_CXO, 5 }
 };
 
-static const char *gcc_pxo_pll8_cxo[] = {
+static const char * const gcc_pxo_pll8_cxo[] = {
 	"pxo",
 	"pll8_vote",
 	"cxo",
@@ -215,7 +215,7 @@ static const struct parent_map gcc_pxo_pll3_sata_map[] = {
 	{ P_PLL3, 6 }
 };
 
-static const char *gcc_pxo_pll3[] = {
+static const char * const gcc_pxo_pll3[] = {
 	"pxo",
 	"pll3",
 };
@@ -226,7 +226,7 @@ static const struct parent_map gcc_pxo_pll8_pll0[] = {
 	{ P_PLL0, 2 }
 };
 
-static const char *gcc_pxo_pll8_pll0_map[] = {
+static const char * const gcc_pxo_pll8_pll0_map[] = {
 	"pxo",
 	"pll8_vote",
 	"pll0_vote",
@@ -240,7 +240,7 @@ static const struct parent_map gcc_pxo_pll8_pll14_pll18_pll0_map[] = {
 	{ P_PLL18, 1 }
 };
 
-static const char *gcc_pxo_pll8_pll14_pll18_pll0[] = {
+static const char * const gcc_pxo_pll8_pll14_pll18_pll0[] = {
 	"pxo",
 	"pll8_vote",
 	"pll0_vote",
@@ -3023,19 +3023,17 @@ MODULE_DEVICE_TABLE(of, gcc_ipq806x_match_table);
 
 static int gcc_ipq806x_probe(struct platform_device *pdev)
 {
-	struct clk *clk;
 	struct device *dev = &pdev->dev;
 	struct regmap *regmap;
 	int ret;
 
-	/* Temporary until RPM clocks supported */
-	clk = clk_register_fixed_rate(dev, "cxo", NULL, CLK_IS_ROOT, 25000000);
-	if (IS_ERR(clk))
-		return PTR_ERR(clk);
+	ret = qcom_cc_register_board_clk(dev, "cxo_board", "cxo", 19200000);
+	if (ret)
+		return ret;
 
-	clk = clk_register_fixed_rate(dev, "pxo", NULL, CLK_IS_ROOT, 25000000);
-	if (IS_ERR(clk))
-		return PTR_ERR(clk);
+	ret = qcom_cc_register_board_clk(dev, "pxo_board", "pxo", 27000000);
+	if (ret)
+		return ret;
 
 	ret = qcom_cc_probe(pdev, &gcc_ipq806x_desc);
 	if (ret)
@@ -3058,15 +3056,8 @@ static int gcc_ipq806x_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int gcc_ipq806x_remove(struct platform_device *pdev)
-{
-	qcom_cc_remove(pdev);
-	return 0;
-}
-
 static struct platform_driver gcc_ipq806x_driver = {
 	.probe		= gcc_ipq806x_probe,
-	.remove		= gcc_ipq806x_remove,
 	.driver		= {
 		.name	= "gcc-ipq806x",
 		.of_match_table = gcc_ipq806x_match_table,

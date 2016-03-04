@@ -27,9 +27,9 @@
 #include <linux/string.h>
 #include <linux/bug.h>
 #include <linux/kernel.h>
+#include <linux/io.h>
 
 #include <asm/unaligned.h>
-#include <asm/io.h>
 #include <asm/barrier.h>
 
 #ifdef CONFIG_MTD_MAP_BANK_WIDTH_1
@@ -142,7 +142,9 @@
 #endif
 
 #ifndef map_bankwidth
+#ifdef CONFIG_MTD
 #warning "No CONFIG_MTD_MAP_BANK_WIDTH_xx selected. No NOR chip support can work"
+#endif
 static inline int map_bankwidth(void *map)
 {
 	BUG();

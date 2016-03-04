@@ -44,8 +44,6 @@
 #define BTRFS_INODE_IN_DELALLOC_LIST		9
 #define BTRFS_INODE_READDIO_NEED_LOCK		10
 #define BTRFS_INODE_HAS_PROPS		        11
-/* DIO is ready to submit */
-#define BTRFS_INODE_DIO_READY		        12
 /*
  * The following 3 bits are meant only for the btree inode.
  * When any of them is set, it means an error happened while writing an
@@ -193,6 +191,10 @@ struct btrfs_inode {
 
 	/* File creation time. */
 	struct timespec i_otime;
+
+	/* Hook into fs_info->delayed_iputs */
+	struct list_head delayed_iput;
+	long delayed_iput_count;
 
 	struct inode vfs_inode;
 };

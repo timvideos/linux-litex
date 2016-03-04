@@ -1,6 +1,8 @@
-/* bnx2x.h: Broadcom Everest network driver.
+/* bnx2x.h: QLogic Everest network driver.
  *
  * Copyright (c) 2007-2013 Broadcom Corporation
+ * Copyright (c) 2014 QLogic Corporation
+ * All rights reserved
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,7 +32,7 @@
  * (you will need to reboot afterwards) */
 /* #define BNX2X_STOP_ON_ERROR */
 
-#define DRV_MODULE_VERSION      "1.710.51-0"
+#define DRV_MODULE_VERSION      "1.712.30-0"
 #define DRV_MODULE_RELDATE      "2014/02/10"
 #define BNX2X_BC_VER            0x040200
 
@@ -538,10 +540,6 @@ struct bnx2x_fastpath {
 
 	struct napi_struct	napi;
 
-#ifdef CONFIG_NET_RX_BUSY_POLL
-	unsigned long		busy_poll_state;
-#endif
-
 	union host_hc_status_block	status_blk;
 	/* chip independent shortcuts into sb structure */
 	__le16			*sb_index_values;
@@ -592,8 +590,6 @@ struct bnx2x_fastpath {
 	/* The last maximal completed SGE */
 	u16			last_max_sge;
 	__le16			*rx_cons_sb;
-	unsigned long		rx_pkt,
-				rx_calls;
 
 	/* TPA related */
 	struct bnx2x_agg_info	*tpa_info;
@@ -614,115 +610,6 @@ struct bnx2x_fastpath {
 #define bnx2x_sp_obj(bp, fp)	((bp)->sp_objs[(fp)->index])
 #define bnx2x_fp_stats(bp, fp)	(&((bp)->fp_stats[(fp)->index]))
 #define bnx2x_fp_qstats(bp, fp)	(&((bp)->fp_stats[(fp)->index].eth_q_stats))
-
-#ifdef CONFIG_NET_RX_BUSY_POLL
-
-enum bnx2x_fp_state {
-	BNX2X_STATE_FP_NAPI	= BIT(0), /* NAPI handler owns the queue */
-
-	BNX2X_STATE_FP_NAPI_REQ_BIT = 1, /* NAPI would like to own the queue */
-	BNX2X_STATE_FP_NAPI_REQ = BIT(1),
-
-	BNX2X_STATE_FP_POLL_BIT = 2,
-	BNX2X_STATE_FP_POLL     = BIT(2), /* busy_poll owns the queue */
-
-	BNX2X_STATE_FP_DISABLE_BIT = 3, /* queue is dismantled */
-};
-
-static inline void bnx2x_fp_busy_poll_init(struct bnx2x_fastpath *fp)
-{
-	WRITE_ONCE(fp->busy_poll_state, 0);
-}
-
-/* called from the device poll routine to get ownership of a FP */
-static inline bool bnx2x_fp_lock_napi(struct bnx2x_fastpath *fp)
-{
-	unsigned long prev, old = READ_ONCE(fp->busy_poll_state);
-
-	while (1) {
-		switch (old) {
-		case BNX2X_STATE_FP_POLL:
-			/* make sure bnx2x_fp_lock_poll() wont starve us */
-			set_bit(BNX2X_STATE_FP_NAPI_REQ_BIT,
-				&fp->busy_poll_state);
-			/* fallthrough */
-		case BNX2X_STATE_FP_POLL | BNX2X_STATE_FP_NAPI_REQ:
-			return false;
-		default:
-			break;
-		}
-		prev = cmpxchg(&fp->busy_poll_state, old, BNX2X_STATE_FP_NAPI);
-		if (unlikely(prev != old)) {
-			old = prev;
-			continue;
-		}
-		return true;
-	}
-}
-
-static inline void bnx2x_fp_unlock_napi(struct bnx2x_fastpath *fp)
-{
-	smp_wmb();
-	fp->busy_poll_state = 0;
-}
-
-/* called from bnx2x_low_latency_poll() */
-static inline bool bnx2x_fp_lock_poll(struct bnx2x_fastpath *fp)
-{
-	return cmpxchg(&fp->busy_poll_state, 0, BNX2X_STATE_FP_POLL) == 0;
-}
-
-static inline void bnx2x_fp_unlock_poll(struct bnx2x_fastpath *fp)
-{
-	smp_mb__before_atomic();
-	clear_bit(BNX2X_STATE_FP_POLL_BIT, &fp->busy_poll_state);
-}
-
-/* true if a socket is polling */
-static inline bool bnx2x_fp_ll_polling(struct bnx2x_fastpath *fp)
-{
-	return READ_ONCE(fp->busy_poll_state) & BNX2X_STATE_FP_POLL;
-}
-
-/* false if fp is currently owned */
-static inline bool bnx2x_fp_ll_disable(struct bnx2x_fastpath *fp)
-{
-	set_bit(BNX2X_STATE_FP_DISABLE_BIT, &fp->busy_poll_state);
-	return !bnx2x_fp_ll_polling(fp);
-
-}
-#else
-static inline void bnx2x_fp_busy_poll_init(struct bnx2x_fastpath *fp)
-{
-}
-
-static inline bool bnx2x_fp_lock_napi(struct bnx2x_fastpath *fp)
-{
-	return true;
-}
-
-static inline void bnx2x_fp_unlock_napi(struct bnx2x_fastpath *fp)
-{
-}
-
-static inline bool bnx2x_fp_lock_poll(struct bnx2x_fastpath *fp)
-{
-	return false;
-}
-
-static inline void bnx2x_fp_unlock_poll(struct bnx2x_fastpath *fp)
-{
-}
-
-static inline bool bnx2x_fp_ll_polling(struct bnx2x_fastpath *fp)
-{
-	return false;
-}
-static inline bool bnx2x_fp_ll_disable(struct bnx2x_fastpath *fp)
-{
-	return true;
-}
-#endif /* CONFIG_NET_RX_BUSY_POLL */
 
 /* Use 2500 as a mini-jumbo MTU for FCoE */
 #define BNX2X_FCOE_MINI_JUMBO_MTU	2500
@@ -1227,6 +1114,10 @@ struct bnx2x_slowpath {
 	} mac_rdata;
 
 	union {
+		struct eth_classify_rules_ramrod_data	e2;
+	} vlan_rdata;
+
+	union {
 		struct tstorm_eth_mac_filter_config	e1x;
 		struct eth_filter_rules_ramrod_data	e2;
 	} rx_mode_rdata;
@@ -1386,6 +1277,8 @@ enum sp_rtnl_flag {
 	BNX2X_SP_RTNL_HYPERVISOR_VLAN,
 	BNX2X_SP_RTNL_TX_STOP,
 	BNX2X_SP_RTNL_GET_DRV_VERSION,
+	BNX2X_SP_RTNL_ADD_VXLAN_PORT,
+	BNX2X_SP_RTNL_DEL_VXLAN_PORT,
 };
 
 enum bnx2x_iov_flag {
@@ -1408,6 +1301,9 @@ struct bnx2x_sp_objs {
 
 	/* Queue State object */
 	struct bnx2x_queue_sp_obj q_obj;
+
+	/* VLANs object */
+	struct bnx2x_vlan_mac_obj vlan_obj;
 };
 
 struct bnx2x_fp_stats {
@@ -1422,6 +1318,13 @@ enum {
 	SUB_MF_MODE_UNKNOWN = 0,
 	SUB_MF_MODE_UFP,
 	SUB_MF_MODE_NPAR1_DOT_5,
+	SUB_MF_MODE_BD,
+};
+
+struct bnx2x_vlan_entry {
+	struct list_head link;
+	u16 vid;
+	bool hw;
 };
 
 struct bnx2x {
@@ -1636,6 +1539,8 @@ struct bnx2x {
 	u8			mf_sub_mode;
 #define IS_MF_UFP(bp)		(IS_MF_SD(bp) && \
 				 bp->mf_sub_mode == SUB_MF_MODE_UFP)
+#define IS_MF_BD(bp)		(IS_MF_SD(bp) && \
+				 bp->mf_sub_mode == SUB_MF_MODE_BD)
 
 	u8			wol;
 
@@ -1860,8 +1765,6 @@ struct bnx2x {
 	int					dcb_version;
 
 	/* CAM credit pools */
-
-	/* used only in sriov */
 	struct bnx2x_credit_pool_obj		vlans_pool;
 
 	struct bnx2x_credit_pool_obj		macs_pool;
@@ -1924,6 +1827,12 @@ struct bnx2x {
 	u16 rx_filter;
 
 	struct bnx2x_link_report_data		vf_link_vars;
+	struct list_head vlan_reg;
+	u16 vlan_cnt;
+	u16 vlan_credit;
+	u16 vxlan_dst_port;
+	u8 vxlan_dst_port_count;
+	bool accept_any_vlan;
 };
 
 /* Tx queues may be less or equal to Rx queues */
@@ -1951,23 +1860,14 @@ extern int num_queues;
 #define RSS_IPV6_TCP_CAP_MASK						\
 	TSTORM_ETH_FUNCTION_COMMON_CONFIG_RSS_IPV6_TCP_CAPABILITY
 
-/* func init flags */
-#define FUNC_FLG_RSS		0x0001
-#define FUNC_FLG_STATS		0x0002
-/* removed  FUNC_FLG_UNMATCHED	0x0004 */
-#define FUNC_FLG_TPA		0x0008
-#define FUNC_FLG_SPQ		0x0010
-#define FUNC_FLG_LEADING	0x0020	/* PF only */
-#define FUNC_FLG_LEADING_STATS	0x0040
 struct bnx2x_func_init_params {
 	/* dma */
-	dma_addr_t	fw_stat_map;	/* valid iff FUNC_FLG_STATS */
-	dma_addr_t	spq_map;	/* valid iff FUNC_FLG_SPQ */
+	bool		spq_active;
+	dma_addr_t	spq_map;
+	u16		spq_prod;
 
-	u16		func_flgs;
 	u16		func_id;	/* abs fid */
 	u16		pf_id;
-	u16		spq_prod;	/* valid iff FUNC_FLG_SPQ */
 };
 
 #define for_each_cnic_queue(bp, var) \
@@ -2077,6 +1977,11 @@ struct bnx2x_func_init_params {
 int bnx2x_set_mac_one(struct bnx2x *bp, u8 *mac,
 		      struct bnx2x_vlan_mac_obj *obj, bool set,
 		      int mac_type, unsigned long *ramrod_flags);
+
+int bnx2x_set_vlan_one(struct bnx2x *bp, u16 vlan,
+		       struct bnx2x_vlan_mac_obj *obj, bool set,
+		       unsigned long *ramrod_flags);
+
 /**
  * bnx2x_del_all_macs - delete all MACs configured for the specific MAC object
  *
@@ -2481,6 +2386,7 @@ void bnx2x_igu_clear_sb_gen(struct bnx2x *bp, u8 func, u8 idu_sb_id,
 #define VF_ACQUIRE_THRESH		3
 #define VF_ACQUIRE_MAC_FILTERS		1
 #define VF_ACQUIRE_MC_FILTERS		10
+#define VF_ACQUIRE_VLAN_FILTERS		2 /* VLAN0 + 'real' VLAN */
 
 #define GOOD_ME_REG(me_reg) (((me_reg) & ME_REG_VF_VALID) && \
 			    (!((me_reg) & ME_REG_VF_ERR)))
@@ -2553,6 +2459,10 @@ void bnx2x_notify_link_changed(struct bnx2x *bp);
 			(IS_MF_SD_STORAGE_PERSONALITY_ONLY(bp) ||	\
 			 IS_MF_SI_STORAGE_PERSONALITY_ONLY(bp))
 
+/* Determines whether BW configuration arrives in 100Mb units or in
+ * percentages from actual physical link speed.
+ */
+#define IS_MF_PERCENT_BW(bp) (IS_MF_SI(bp) || IS_MF_UFP(bp) || IS_MF_BD(bp))
 
 #define SET_FLAG(value, mask, flag) \
 	do {\
@@ -2577,6 +2487,8 @@ void bnx2x_set_local_cmng(struct bnx2x *bp);
 
 void bnx2x_update_mng_version(struct bnx2x *bp);
 
+void bnx2x_update_mfw_dump(struct bnx2x *bp);
+
 #define MCPR_SCRATCH_BASE(bp) \
 	(CHIP_IS_E1x(bp) ? MCP_REG_MCPR_SCRATCH : MCP_A_REG_MCPR_SCRATCH)
 
@@ -2588,5 +2500,10 @@ void bnx2x_set_rx_ts(struct bnx2x *bp, struct sk_buff *skb);
 
 #define BNX2X_MAX_PHC_DRIFT 31000000
 #define BNX2X_PTP_TX_TIMEOUT
+
+/* Re-configure all previously configured vlan filters.
+ * Meant for implicit re-load flows.
+ */
+int bnx2x_vlan_reconfigure_vid(struct bnx2x *bp);
 
 #endif /* bnx2x.h */

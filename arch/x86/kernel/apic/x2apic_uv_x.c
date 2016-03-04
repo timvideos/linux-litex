@@ -248,7 +248,6 @@ static int uv_wakeup_secondary(int phys_apicid, unsigned long start_rip)
 	    APIC_DM_STARTUP;
 	uv_write_global_mmr64(pnode, UVH_IPI_INT, val);
 
-	atomic_set(&init_deasserted, 1);
 	return 0;
 }
 
@@ -407,6 +406,7 @@ static struct apic __refdata apic_x2apic_uv_x = {
 
 	.cpu_mask_to_apicid_and		= uv_cpu_mask_to_apicid_and,
 
+	.send_IPI			= uv_send_IPI_one,
 	.send_IPI_mask			= uv_send_IPI_mask,
 	.send_IPI_mask_allbutself	= uv_send_IPI_mask_allbutself,
 	.send_IPI_allbutself		= uv_send_IPI_allbutself,
@@ -414,7 +414,6 @@ static struct apic __refdata apic_x2apic_uv_x = {
 	.send_IPI_self			= uv_send_IPI_self,
 
 	.wakeup_secondary_cpu		= uv_wakeup_secondary,
-	.wait_for_init_deassert		= false,
 	.inquire_remote_apic		= NULL,
 
 	.read				= native_apic_msr_read,
@@ -890,7 +889,10 @@ void __init uv_system_init(void)
 		return;
 	}
 	pr_info("UV: Found %s hub\n", hub);
-	map_low_mmrs();
+
+	/* We now only need to map the MMRs on UV1 */
+	if (is_uv1_hub())
+		map_low_mmrs();
 
 	m_n_config.v = uv_read_local_mmr(UVH_RH_GAM_CONFIG_MMR );
 	m_val = m_n_config.s.m_skt;

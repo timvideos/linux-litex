@@ -53,7 +53,6 @@
 
 #include <target/target_core_base.h>
 #include <target/target_core_fabric.h>
-#include <target/target_core_fabric_configfs.h>
 
 #include <asm/hypervisor.h>
 
@@ -727,7 +726,7 @@ static int scsiback_do_cmd_fn(struct vscsibk_info *info)
 		if (!pending_req)
 			return 1;
 
-		ring_req = *RING_GET_REQUEST(ring, rc);
+		RING_COPY_REQUEST(ring, rc, &ring_req);
 		ring->req_cons = ++rc;
 
 		err = prepare_pending_reqs(info, &ring_req, pending_req);
@@ -850,15 +849,31 @@ static int scsiback_map(struct vscsibk_info *info)
 }
 
 /*
+  Check for a translation entry being present
+*/
+static struct v2p_entry *scsiback_chk_translation_entry(
+	struct vscsibk_info *info, struct ids_tuple *v)
+{
+	struct list_head *head = &(info->v2p_entry_lists);
+	struct v2p_entry *entry;
+
+	list_for_each_entry(entry, head, l)
+		if ((entry->v.chn == v->chn) &&
+		    (entry->v.tgt == v->tgt) &&
+		    (entry->v.lun == v->lun))
+			return entry;
+
+	return NULL;
+}
+
+/*
   Add a new translation entry
 */
 static int scsiback_add_translation_entry(struct vscsibk_info *info,
 					  char *phy, struct ids_tuple *v)
 {
 	int err = 0;
-	struct v2p_entry *entry;
 	struct v2p_entry *new;
-	struct list_head *head = &(info->v2p_entry_lists);
 	unsigned long flags;
 	char *lunp;
 	unsigned long long unpacked_lun;
@@ -918,15 +933,10 @@ static int scsiback_add_translation_entry(struct vscsibk_info *info,
 	spin_lock_irqsave(&info->v2p_lock, flags);
 
 	/* Check double assignment to identical virtual ID */
-	list_for_each_entry(entry, head, l) {
-		if ((entry->v.chn == v->chn) &&
-		    (entry->v.tgt == v->tgt) &&
-		    (entry->v.lun == v->lun)) {
-			pr_warn("Virtual ID is already used. Assignment was not performed.\n");
-			err = -EEXIST;
-			goto out;
-		}
-
+	if (scsiback_chk_translation_entry(info, v)) {
+		pr_warn("Virtual ID is already used. Assignment was not performed.\n");
+		err = -EEXIST;
+		goto out;
 	}
 
 	/* Create a new translation entry and add to the list */
@@ -934,18 +944,18 @@ static int scsiback_add_translation_entry(struct vscsibk_info *info,
 	new->v = *v;
 	new->tpg = tpg;
 	new->lun = unpacked_lun;
-	list_add_tail(&new->l, head);
+	list_add_tail(&new->l, &info->v2p_entry_lists);
 
 out:
 	spin_unlock_irqrestore(&info->v2p_lock, flags);
 
 out_free:
-	mutex_lock(&tpg->tv_tpg_mutex);
-	tpg->tv_tpg_fe_count--;
-	mutex_unlock(&tpg->tv_tpg_mutex);
-
-	if (err)
+	if (err) {
+		mutex_lock(&tpg->tv_tpg_mutex);
+		tpg->tv_tpg_fe_count--;
+		mutex_unlock(&tpg->tv_tpg_mutex);
 		kfree(new);
+	}
 
 	return err;
 }
@@ -957,39 +967,40 @@ static void __scsiback_del_translation_entry(struct v2p_entry *entry)
 }
 
 /*
-  Delete the translation entry specfied
+  Delete the translation entry specified
 */
 static int scsiback_del_translation_entry(struct vscsibk_info *info,
 					  struct ids_tuple *v)
 {
 	struct v2p_entry *entry;
-	struct list_head *head = &(info->v2p_entry_lists);
 	unsigned long flags;
+	int ret = 0;
 
 	spin_lock_irqsave(&info->v2p_lock, flags);
 	/* Find out the translation entry specified */
-	list_for_each_entry(entry, head, l) {
-		if ((entry->v.chn == v->chn) &&
-		    (entry->v.tgt == v->tgt) &&
-		    (entry->v.lun == v->lun)) {
-			goto found;
-		}
-	}
+	entry = scsiback_chk_translation_entry(info, v);
+	if (entry)
+		__scsiback_del_translation_entry(entry);
+	else
+		ret = -ENOENT;
 
 	spin_unlock_irqrestore(&info->v2p_lock, flags);
-	return 1;
-
-found:
-	/* Delete the translation entry specfied */
-	__scsiback_del_translation_entry(entry);
-
-	spin_unlock_irqrestore(&info->v2p_lock, flags);
-	return 0;
+	return ret;
 }
 
 static void scsiback_do_add_lun(struct vscsibk_info *info, const char *state,
 				char *phy, struct ids_tuple *vir, int try)
 {
+	struct v2p_entry *entry;
+	unsigned long flags;
+
+	if (try) {
+		spin_lock_irqsave(&info->v2p_lock, flags);
+		entry = scsiback_chk_translation_entry(info, vir);
+		spin_unlock_irqrestore(&info->v2p_lock, flags);
+		if (entry)
+			return;
+	}
 	if (!scsiback_add_translation_entry(info, phy, vir)) {
 		if (xenbus_printf(XBT_NIL, info->dev->nodename, state,
 				  "%d", XenbusStateInitialised)) {
@@ -1438,9 +1449,10 @@ static void scsiback_aborted_task(struct se_cmd *se_cmd)
 {
 }
 
-static ssize_t scsiback_tpg_param_show_alias(struct se_portal_group *se_tpg,
+static ssize_t scsiback_tpg_param_alias_show(struct config_item *item,
 					     char *page)
 {
+	struct se_portal_group *se_tpg = param_to_tpg(item);
 	struct scsiback_tpg *tpg = container_of(se_tpg, struct scsiback_tpg,
 						se_tpg);
 	ssize_t rb;
@@ -1452,9 +1464,10 @@ static ssize_t scsiback_tpg_param_show_alias(struct se_portal_group *se_tpg,
 	return rb;
 }
 
-static ssize_t scsiback_tpg_param_store_alias(struct se_portal_group *se_tpg,
+static ssize_t scsiback_tpg_param_alias_store(struct config_item *item,
 					      const char *page, size_t count)
 {
+	struct se_portal_group *se_tpg = param_to_tpg(item);
 	struct scsiback_tpg *tpg = container_of(se_tpg, struct scsiback_tpg,
 						se_tpg);
 	int len;
@@ -1474,10 +1487,10 @@ static ssize_t scsiback_tpg_param_store_alias(struct se_portal_group *se_tpg,
 	return count;
 }
 
-TF_TPG_PARAM_ATTR(scsiback, alias, S_IRUGO | S_IWUSR);
+CONFIGFS_ATTR(scsiback_tpg_param_, alias);
 
 static struct configfs_attribute *scsiback_param_attrs[] = {
-	&scsiback_tpg_param_alias.attr,
+	&scsiback_tpg_param_attr_alias,
 	NULL,
 };
 
@@ -1585,9 +1598,9 @@ static int scsiback_drop_nexus(struct scsiback_tpg *tpg)
 	return 0;
 }
 
-static ssize_t scsiback_tpg_show_nexus(struct se_portal_group *se_tpg,
-					char *page)
+static ssize_t scsiback_tpg_nexus_show(struct config_item *item, char *page)
 {
+	struct se_portal_group *se_tpg = to_tpg(item);
 	struct scsiback_tpg *tpg = container_of(se_tpg,
 				struct scsiback_tpg, se_tpg);
 	struct scsiback_nexus *tv_nexus;
@@ -1606,10 +1619,10 @@ static ssize_t scsiback_tpg_show_nexus(struct se_portal_group *se_tpg,
 	return ret;
 }
 
-static ssize_t scsiback_tpg_store_nexus(struct se_portal_group *se_tpg,
-					 const char *page,
-					 size_t count)
+static ssize_t scsiback_tpg_nexus_store(struct config_item *item,
+		const char *page, size_t count)
 {
+	struct se_portal_group *se_tpg = to_tpg(item);
 	struct scsiback_tpg *tpg = container_of(se_tpg,
 				struct scsiback_tpg, se_tpg);
 	struct scsiback_tport *tport_wwn = tpg->tport;
@@ -1681,26 +1694,25 @@ check_newline:
 	return count;
 }
 
-TF_TPG_BASE_ATTR(scsiback, nexus, S_IRUGO | S_IWUSR);
+CONFIGFS_ATTR(scsiback_tpg_, nexus);
 
 static struct configfs_attribute *scsiback_tpg_attrs[] = {
-	&scsiback_tpg_nexus.attr,
+	&scsiback_tpg_attr_nexus,
 	NULL,
 };
 
 static ssize_t
-scsiback_wwn_show_attr_version(struct target_fabric_configfs *tf,
-				char *page)
+scsiback_wwn_version_show(struct config_item *item, char *page)
 {
 	return sprintf(page, "xen-pvscsi fabric module %s on %s/%s on "
 		UTS_RELEASE"\n",
 		VSCSI_VERSION, utsname()->sysname, utsname()->machine);
 }
 
-TF_WWN_ATTR_RO(scsiback, version);
+CONFIGFS_ATTR_RO(scsiback_wwn_, version);
 
 static struct configfs_attribute *scsiback_wwn_attrs[] = {
-	&scsiback_wwn_version.attr,
+	&scsiback_wwn_attr_version,
 	NULL,
 };
 

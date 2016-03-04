@@ -24,6 +24,7 @@
 #ifndef __AMDGPU_IRQ_H__
 #define __AMDGPU_IRQ_H__
 
+#include <linux/irqdomain.h>
 #include "amdgpu_ih.h"
 
 #define AMDGPU_MAX_IRQ_SRC_ID	0x100
@@ -40,6 +41,7 @@ struct amdgpu_irq_src {
 	unsigned				num_types;
 	atomic_t				*enabled_types;
 	const struct amdgpu_irq_src_funcs	*funcs;
+	void *data;
 };
 
 /* provided by interrupt generating IP blocks */
@@ -64,6 +66,10 @@ struct amdgpu_irq {
 	/* interrupt ring */
 	struct amdgpu_ih_ring		ih;
 	const struct amdgpu_ih_funcs	*ih_funcs;
+
+	/* gen irq stuff */
+	struct irq_domain		*domain; /* GPU irq controller domain */
+	unsigned			virq[AMDGPU_MAX_IRQ_SRC_ID];
 };
 
 void amdgpu_irq_preinstall(struct drm_device *dev);
@@ -88,5 +94,9 @@ int amdgpu_irq_put(struct amdgpu_device *adev, struct amdgpu_irq_src *src,
 		   unsigned type);
 bool amdgpu_irq_enabled(struct amdgpu_device *adev, struct amdgpu_irq_src *src,
 			unsigned type);
+
+int amdgpu_irq_add_domain(struct amdgpu_device *adev);
+void amdgpu_irq_remove_domain(struct amdgpu_device *adev);
+unsigned amdgpu_irq_create_mapping(struct amdgpu_device *adev, unsigned src_id);
 
 #endif

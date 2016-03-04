@@ -5,6 +5,19 @@ struct target_core_fabric_ops {
 	struct module *module;
 	const char *name;
 	size_t node_acl_size;
+	/*
+	 * Limits number of scatterlist entries per SCF_SCSI_DATA_CDB payload.
+	 * Setting this value tells target-core to enforce this limit, and
+	 * report as INQUIRY EVPD=b0 MAXIMUM TRANSFER LENGTH.
+	 *
+	 * target-core will currently reset se_cmd->data_length to this
+	 * maximum size, and set UNDERFLOW residual count if length exceeds
+	 * this limit.
+	 *
+	 * XXX: Not all initiator hosts honor this block-limit EVPD
+	 * XXX: Currently assumes single PAGE_SIZE per scatterlist entry
+	 */
+	u32 max_data_sg_nents;
 	char *(*get_fabric_name)(void);
 	char *(*tpg_get_wwn)(struct se_portal_group *);
 	u16 (*tpg_get_tag)(struct se_portal_group *);
@@ -104,7 +117,7 @@ void	__transport_register_session(struct se_portal_group *,
 		struct se_node_acl *, struct se_session *, void *);
 void	transport_register_session(struct se_portal_group *,
 		struct se_node_acl *, struct se_session *, void *);
-void	target_get_session(struct se_session *);
+int	target_get_session(struct se_session *);
 void	target_put_session(struct se_session *);
 ssize_t	target_show_dynamic_sessions(struct se_portal_group *, char *);
 void	transport_free_session(struct se_session *);
@@ -127,7 +140,7 @@ int	target_submit_cmd(struct se_cmd *, struct se_session *, unsigned char *,
 int	target_submit_tmr(struct se_cmd *se_cmd, struct se_session *se_sess,
 		unsigned char *sense, u64 unpacked_lun,
 		void *fabric_tmr_ptr, unsigned char tm_type,
-		gfp_t, unsigned int, int);
+		gfp_t, u64, int);
 int	transport_handle_cdb_direct(struct se_cmd *);
 sense_reason_t	transport_generic_new_cmd(struct se_cmd *);
 
@@ -152,13 +165,15 @@ int	transport_generic_handle_tmr(struct se_cmd *);
 void	transport_generic_request_failure(struct se_cmd *, sense_reason_t);
 void	__target_execute_cmd(struct se_cmd *);
 int	transport_lookup_tmr_lun(struct se_cmd *, u64);
+void	core_allocate_nexus_loss_ua(struct se_node_acl *acl);
 
 struct se_node_acl *core_tpg_get_initiator_node_acl(struct se_portal_group *tpg,
 		unsigned char *);
+bool	target_tpg_has_node_acl(struct se_portal_group *tpg,
+		const char *);
 struct se_node_acl *core_tpg_check_initiator_node_acl(struct se_portal_group *,
 		unsigned char *);
-int	core_tpg_set_initiator_node_queue_depth(struct se_portal_group *,
-		unsigned char *, u32, int);
+int	core_tpg_set_initiator_node_queue_depth(struct se_node_acl *, u32);
 int	core_tpg_set_initiator_node_tag(struct se_portal_group *,
 		struct se_node_acl *, const char *);
 int	core_tpg_register(struct se_wwn *, struct se_portal_group *, int);

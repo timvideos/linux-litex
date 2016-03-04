@@ -18,6 +18,7 @@
 
 #include <linux/module.h>
 #include <linux/device.h>
+#include <linux/gpio/consumer.h>
 #include <linux/platform_device.h>
 #include <linux/clk.h>
 #include <linux/slab.h>
@@ -32,6 +33,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
+#include <linux/reboot.h>
 #include <linux/reset.h>
 
 #include <linux/usb.h>
@@ -1471,6 +1473,14 @@ static int msm_otg_vbus_notifier(struct notifier_block *nb, unsigned long event,
 	else
 		clear_bit(B_SESS_VLD, &motg->inputs);
 
+	if (test_bit(B_SESS_VLD, &motg->inputs)) {
+		/* Switch D+/D- lines to Device connector */
+		gpiod_set_value_cansleep(motg->switch_gpio, 0);
+	} else {
+		/* Switch D+/D- lines to Hub */
+		gpiod_set_value_cansleep(motg->switch_gpio, 1);
+	}
+
 	schedule_work(&motg->sm_work);
 
 	return NOTIFY_DONE;
@@ -1496,7 +1506,6 @@ static int msm_otg_read_dt(struct platform_device *pdev, struct msm_otg *motg)
 {
 	struct msm_otg_platform_data *pdata;
 	struct extcon_dev *ext_id, *ext_vbus;
-	const struct of_device_id *id;
 	struct device_node *node = pdev->dev.of_node;
 	struct property *prop;
 	int len, ret, words;
@@ -1508,8 +1517,9 @@ static int msm_otg_read_dt(struct platform_device *pdev, struct msm_otg *motg)
 
 	motg->pdata = pdata;
 
-	id = of_match_device(msm_otg_dt_match, &pdev->dev);
-	pdata->phy_type = (enum msm_usb_phy_type) id->data;
+	pdata->phy_type = (enum msm_usb_phy_type)of_device_get_match_data(&pdev->dev);
+	if (!pdata->phy_type)
+		return 1;
 
 	motg->link_rst = devm_reset_control_get(&pdev->dev, "link");
 	if (IS_ERR(motg->link_rst))
@@ -1519,7 +1529,7 @@ static int msm_otg_read_dt(struct platform_device *pdev, struct msm_otg *motg)
 	if (IS_ERR(motg->phy_rst))
 		motg->phy_rst = NULL;
 
-	pdata->mode = of_usb_get_dr_mode(node);
+	pdata->mode = usb_get_dr_mode(&pdev->dev);
 	if (pdata->mode == USB_DR_MODE_UNKNOWN)
 		pdata->mode = USB_DR_MODE_OTG;
 
@@ -1546,6 +1556,11 @@ static int msm_otg_read_dt(struct platform_device *pdev, struct msm_otg *motg)
 
 	motg->manual_pullup = of_property_read_bool(node, "qcom,manual-pullup");
 
+	motg->switch_gpio = devm_gpiod_get_optional(&pdev->dev, "switch",
+						    GPIOD_OUT_LOW);
+	if (IS_ERR(motg->switch_gpio))
+		return PTR_ERR(motg->switch_gpio);
+
 	ext_id = ERR_PTR(-ENODEV);
 	ext_vbus = ERR_PTR(-ENODEV);
 	if (of_property_read_bool(node, "extcon")) {
@@ -1561,15 +1576,16 @@ static int msm_otg_read_dt(struct platform_device *pdev, struct msm_otg *motg)
 	}
 
 	if (!IS_ERR(ext_vbus)) {
+		motg->vbus.extcon = ext_vbus;
 		motg->vbus.nb.notifier_call = msm_otg_vbus_notifier;
-		ret = extcon_register_interest(&motg->vbus.conn, ext_vbus->name,
-					       "USB", &motg->vbus.nb);
+		ret = extcon_register_notifier(ext_vbus, EXTCON_USB,
+						&motg->vbus.nb);
 		if (ret < 0) {
 			dev_err(&pdev->dev, "register VBUS notifier failed\n");
 			return ret;
 		}
 
-		ret = extcon_get_cable_state(ext_vbus, "USB");
+		ret = extcon_get_cable_state_(ext_vbus, EXTCON_USB);
 		if (ret)
 			set_bit(B_SESS_VLD, &motg->inputs);
 		else
@@ -1577,15 +1593,18 @@ static int msm_otg_read_dt(struct platform_device *pdev, struct msm_otg *motg)
 	}
 
 	if (!IS_ERR(ext_id)) {
+		motg->id.extcon = ext_id;
 		motg->id.nb.notifier_call = msm_otg_id_notifier;
-		ret = extcon_register_interest(&motg->id.conn, ext_id->name,
-					       "USB-HOST", &motg->id.nb);
+		ret = extcon_register_notifier(ext_id, EXTCON_USB_HOST,
+						&motg->id.nb);
 		if (ret < 0) {
 			dev_err(&pdev->dev, "register ID notifier failed\n");
+			extcon_unregister_notifier(motg->vbus.extcon,
+						   EXTCON_USB, &motg->vbus.nb);
 			return ret;
 		}
 
-		ret = extcon_get_cable_state(ext_id, "USB-HOST");
+		ret = extcon_get_cable_state_(ext_id, EXTCON_USB_HOST);
 		if (ret)
 			clear_bit(ID, &motg->inputs);
 		else
@@ -1615,6 +1634,19 @@ static int msm_otg_read_dt(struct platform_device *pdev, struct msm_otg *motg)
 	return 0;
 }
 
+static int msm_otg_reboot_notify(struct notifier_block *this,
+				 unsigned long code, void *unused)
+{
+	struct msm_otg *motg = container_of(this, struct msm_otg, reboot);
+
+	/*
+	 * Ensure that D+/D- lines are routed to uB connector, so
+	 * we could load bootloader/kernel at next reboot
+	 */
+	gpiod_set_value_cansleep(motg->switch_gpio, 0);
+	return NOTIFY_DONE;
+}
+
 static int msm_otg_probe(struct platform_device *pdev)
 {
 	struct regulator_bulk_data regs[3];
@@ -1629,15 +1661,6 @@ static int msm_otg_probe(struct platform_device *pdev)
 	motg = devm_kzalloc(&pdev->dev, sizeof(struct msm_otg), GFP_KERNEL);
 	if (!motg)
 		return -ENOMEM;
-
-	pdata = dev_get_platdata(&pdev->dev);
-	if (!pdata) {
-		if (!np)
-			return -ENXIO;
-		ret = msm_otg_read_dt(pdev, motg);
-		if (ret)
-			return ret;
-	}
 
 	motg->phy.otg = devm_kzalloc(&pdev->dev, sizeof(struct usb_otg),
 				     GFP_KERNEL);
@@ -1680,6 +1703,15 @@ static int msm_otg_probe(struct platform_device *pdev)
 	if (!motg->regs)
 		return -ENOMEM;
 
+	pdata = dev_get_platdata(&pdev->dev);
+	if (!pdata) {
+		if (!np)
+			return -ENXIO;
+		ret = msm_otg_read_dt(pdev, motg);
+		if (ret)
+			return ret;
+	}
+
 	/*
 	 * NOTE: The PHYs can be multiplexed between the chipidea controller
 	 * and the dwc3 controller, using a single bit. It is important that
@@ -1687,8 +1719,10 @@ static int msm_otg_probe(struct platform_device *pdev)
 	 */
 	if (motg->phy_number) {
 		phy_select = devm_ioremap_nocache(&pdev->dev, USB2_PHY_SEL, 4);
-		if (!phy_select)
-			return -ENOMEM;
+		if (!phy_select) {
+			ret = -ENOMEM;
+			goto unregister_extcon;
+		}
 		/* Enable second PHY with the OTG port */
 		writel(0x1, phy_select);
 	}
@@ -1698,7 +1732,8 @@ static int msm_otg_probe(struct platform_device *pdev)
 	motg->irq = platform_get_irq(pdev, 0);
 	if (motg->irq < 0) {
 		dev_err(&pdev->dev, "platform_get_irq failed\n");
-		return motg->irq;
+		ret = motg->irq;
+		goto unregister_extcon;
 	}
 
 	regs[0].supply = "vddcx";
@@ -1707,7 +1742,7 @@ static int msm_otg_probe(struct platform_device *pdev)
 
 	ret = devm_regulator_bulk_get(motg->phy.dev, ARRAY_SIZE(regs), regs);
 	if (ret)
-		return ret;
+		goto unregister_extcon;
 
 	motg->vddcx = regs[0].consumer;
 	motg->v3p3  = regs[1].consumer;
@@ -1779,6 +1814,17 @@ static int msm_otg_probe(struct platform_device *pdev)
 			dev_dbg(&pdev->dev, "Can not create mode change file\n");
 	}
 
+	if (test_bit(B_SESS_VLD, &motg->inputs)) {
+		/* Switch D+/D- lines to Device connector */
+		gpiod_set_value_cansleep(motg->switch_gpio, 0);
+	} else {
+		/* Switch D+/D- lines to Hub */
+		gpiod_set_value_cansleep(motg->switch_gpio, 1);
+	}
+
+	motg->reboot.notifier_call = msm_otg_reboot_notify;
+	register_reboot_notifier(&motg->reboot);
+
 	pm_runtime_set_active(&pdev->dev);
 	pm_runtime_enable(&pdev->dev);
 
@@ -1793,6 +1839,12 @@ disable_clks:
 	clk_disable_unprepare(motg->clk);
 	if (!IS_ERR(motg->core_clk))
 		clk_disable_unprepare(motg->core_clk);
+unregister_extcon:
+	extcon_unregister_notifier(motg->id.extcon,
+				   EXTCON_USB_HOST, &motg->id.nb);
+	extcon_unregister_notifier(motg->vbus.extcon,
+				   EXTCON_USB, &motg->vbus.nb);
+
 	return ret;
 }
 
@@ -1805,10 +1857,16 @@ static int msm_otg_remove(struct platform_device *pdev)
 	if (phy->otg->host || phy->otg->gadget)
 		return -EBUSY;
 
-	if (motg->id.conn.edev)
-		extcon_unregister_interest(&motg->id.conn);
-	if (motg->vbus.conn.edev)
-		extcon_unregister_interest(&motg->vbus.conn);
+	unregister_reboot_notifier(&motg->reboot);
+
+	/*
+	 * Ensure that D+/D- lines are routed to uB connector, so
+	 * we could load bootloader/kernel at next reboot
+	 */
+	gpiod_set_value_cansleep(motg->switch_gpio, 0);
+
+	extcon_unregister_notifier(motg->id.extcon, EXTCON_USB_HOST, &motg->id.nb);
+	extcon_unregister_notifier(motg->vbus.extcon, EXTCON_USB, &motg->vbus.nb);
 
 	msm_otg_debugfs_cleanup();
 	cancel_delayed_work_sync(&motg->chg_work);

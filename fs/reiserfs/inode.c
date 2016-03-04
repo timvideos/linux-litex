@@ -1361,6 +1361,7 @@ static void init_inode(struct inode *inode, struct treepath *path)
 		inode->i_fop = &reiserfs_dir_operations;
 	} else if (S_ISLNK(inode->i_mode)) {
 		inode->i_op = &reiserfs_symlink_inode_operations;
+		inode_nohighmem(inode);
 		inode->i_mapping->a_ops = &reiserfs_address_space_operations;
 	} else {
 		inode->i_blocks = 0;
@@ -3319,8 +3320,11 @@ int reiserfs_setattr(struct dentry *dentry, struct iattr *attr)
 	/* must be turned off for recursive notify_change calls */
 	ia_valid = attr->ia_valid &= ~(ATTR_KILL_SUID|ATTR_KILL_SGID);
 
-	if (is_quota_modification(inode, attr))
-		dquot_initialize(inode);
+	if (is_quota_modification(inode, attr)) {
+		error = dquot_initialize(inode);
+		if (error)
+			return error;
+	}
 	reiserfs_write_lock(inode->i_sb);
 	if (attr->ia_valid & ATTR_SIZE) {
 		/*

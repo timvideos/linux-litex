@@ -215,6 +215,7 @@ struct ehci_hcd {			/* one per controller */
 	/* SILICON QUIRKS */
 	unsigned		no_selective_suspend:1;
 	unsigned		has_fsl_port_bug:1; /* FreeScale */
+	unsigned		has_fsl_hs_errata:1;	/* Freescale HS quirk */
 	unsigned		big_endian_mmio:1;
 	unsigned		big_endian_desc:1;
 	unsigned		big_endian_capbase:1;
@@ -438,6 +439,7 @@ struct ehci_qh {
 	unsigned		dequeue_during_giveback:1;
 	unsigned		exception:1;	/* got a fault, or an unlink
 						   was requested */
+	unsigned		should_be_inactive:1;
 };
 
 /*-------------------------------------------------------------------------*/
@@ -684,6 +686,17 @@ ehci_port_speed(struct ehci_hcd *ehci, unsigned int portsc)
 #define	ehci_has_fsl_portno_bug(e)		((e)->has_fsl_port_bug)
 #else
 #define	ehci_has_fsl_portno_bug(e)		(0)
+#endif
+
+#define PORTSC_FSL_PFSC	24	/* Port Force Full-Speed Connect */
+
+#if defined(CONFIG_PPC_85xx)
+/* Some Freescale processors have an erratum (USB A-005275) in which
+ * incoming packets get corrupted in HS mode
+ */
+#define ehci_has_fsl_hs_errata(e)	((e)->has_fsl_hs_errata)
+#else
+#define ehci_has_fsl_hs_errata(e)	(0)
 #endif
 
 /*

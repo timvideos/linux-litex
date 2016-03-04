@@ -15,6 +15,8 @@ static bool hists__filter_entry_by_thread(struct hists *hists,
 					  struct hist_entry *he);
 static bool hists__filter_entry_by_symbol(struct hists *hists,
 					  struct hist_entry *he);
+static bool hists__filter_entry_by_socket(struct hists *hists,
+					  struct hist_entry *he);
 
 u16 hists__col_len(struct hists *hists, enum hist_column col)
 {
@@ -129,7 +131,21 @@ void hists__calc_col_len(struct hists *hists, struct hist_entry *h)
 			symlen = unresolved_col_width + 4 + 2;
 			hists__new_col_len(hists, HISTC_MEM_DADDR_SYMBOL,
 					   symlen);
+			hists__new_col_len(hists, HISTC_MEM_DCACHELINE,
+					   symlen);
 		}
+
+		if (h->mem_info->iaddr.sym) {
+			symlen = (int)h->mem_info->iaddr.sym->namelen + 4
+			       + unresolved_col_width + 2;
+			hists__new_col_len(hists, HISTC_MEM_IADDR_SYMBOL,
+					   symlen);
+		} else {
+			symlen = unresolved_col_width + 4 + 2;
+			hists__new_col_len(hists, HISTC_MEM_IADDR_SYMBOL,
+					   symlen);
+		}
+
 		if (h->mem_info->daddr.map) {
 			symlen = dso__name_len(h->mem_info->daddr.map->dso);
 			hists__new_col_len(hists, HISTC_MEM_DADDR_DSO,
@@ -141,15 +157,24 @@ void hists__calc_col_len(struct hists *hists, struct hist_entry *h)
 	} else {
 		symlen = unresolved_col_width + 4 + 2;
 		hists__new_col_len(hists, HISTC_MEM_DADDR_SYMBOL, symlen);
+		hists__new_col_len(hists, HISTC_MEM_IADDR_SYMBOL, symlen);
 		hists__set_unres_dso_col_len(hists, HISTC_MEM_DADDR_DSO);
 	}
 
+	hists__new_col_len(hists, HISTC_CPU, 3);
+	hists__new_col_len(hists, HISTC_SOCKET, 6);
 	hists__new_col_len(hists, HISTC_MEM_LOCKED, 6);
 	hists__new_col_len(hists, HISTC_MEM_TLB, 22);
 	hists__new_col_len(hists, HISTC_MEM_SNOOP, 12);
 	hists__new_col_len(hists, HISTC_MEM_LVL, 21 + 3);
 	hists__new_col_len(hists, HISTC_LOCAL_WEIGHT, 12);
 	hists__new_col_len(hists, HISTC_GLOBAL_WEIGHT, 12);
+
+	if (h->srcline)
+		hists__new_col_len(hists, HISTC_SRCLINE, strlen(h->srcline));
+
+	if (h->srcfile)
+		hists__new_col_len(hists, HISTC_SRCFILE, strlen(h->srcfile));
 
 	if (h->transaction)
 		hists__new_col_len(hists, HISTC_TRANSACTION,
@@ -231,6 +256,7 @@ static bool hists__decay_entry(struct hists *hists, struct hist_entry *he)
 	he_stat__decay(&he->stat);
 	if (symbol_conf.cumulate_callchain)
 		he_stat__decay(he->stat_acc);
+	decay_callchain(he->callchain);
 
 	diff = prev_period - he->stat.period;
 
@@ -247,6 +273,8 @@ static void hists__delete_entry(struct hists *hists, struct hist_entry *he)
 
 	if (sort__need_collapse)
 		rb_erase(&he->rb_node_in, &hists->entries_collapsed);
+	else
+		rb_erase(&he->rb_node_in, hists->entries_in);
 
 	--hists->nr_entries;
 	if (!he->filtered)
@@ -344,6 +372,25 @@ static struct hist_entry *hist_entry__new(struct hist_entry *template,
 		if (symbol_conf.use_callchain)
 			callchain_init(he->callchain);
 
+		if (he->raw_data) {
+			he->raw_data = memdup(he->raw_data, he->raw_size);
+
+			if (he->raw_data == NULL) {
+				map__put(he->ms.map);
+				if (he->branch_info) {
+					map__put(he->branch_info->from.map);
+					map__put(he->branch_info->to.map);
+					free(he->branch_info);
+				}
+				if (he->mem_info) {
+					map__put(he->mem_info->iaddr.map);
+					map__put(he->mem_info->daddr.map);
+				}
+				free(he->stat_acc);
+				free(he);
+				return NULL;
+			}
+		}
 		INIT_LIST_HEAD(&he->pairs.node);
 		thread__get(he->thread);
 	}
@@ -436,7 +483,7 @@ struct hist_entry *__hists__add_entry(struct hists *hists,
 				      struct symbol *sym_parent,
 				      struct branch_info *bi,
 				      struct mem_info *mi,
-				      u64 period, u64 weight, u64 transaction,
+				      struct perf_sample *sample,
 				      bool sample_self)
 {
 	struct hist_entry entry = {
@@ -446,21 +493,24 @@ struct hist_entry *__hists__add_entry(struct hists *hists,
 			.map	= al->map,
 			.sym	= al->sym,
 		},
+		.socket	 = al->socket,
 		.cpu	 = al->cpu,
 		.cpumode = al->cpumode,
 		.ip	 = al->addr,
 		.level	 = al->level,
 		.stat = {
 			.nr_events = 1,
-			.period	= period,
-			.weight = weight,
+			.period	= sample->period,
+			.weight = sample->weight,
 		},
 		.parent = sym_parent,
 		.filtered = symbol__parent_filter(sym_parent) | al->filtered,
 		.hists	= hists,
 		.branch_info = bi,
 		.mem_info = mi,
-		.transaction = transaction,
+		.transaction = sample->transaction,
+		.raw_data = sample->raw_data,
+		.raw_size = sample->raw_size,
 	};
 
 	return hists__findnew_entry(hists, &entry, al, sample_self);
@@ -500,12 +550,13 @@ iter_add_single_mem_entry(struct hist_entry_iter *iter, struct addr_location *al
 	u64 cost;
 	struct mem_info *mi = iter->priv;
 	struct hists *hists = evsel__hists(iter->evsel);
+	struct perf_sample *sample = iter->sample;
 	struct hist_entry *he;
 
 	if (mi == NULL)
 		return -EINVAL;
 
-	cost = iter->sample->weight;
+	cost = sample->weight;
 	if (!cost)
 		cost = 1;
 
@@ -516,8 +567,10 @@ iter_add_single_mem_entry(struct hist_entry_iter *iter, struct addr_location *al
 	 * and this is indirectly achieved by passing period=weight here
 	 * and the he_stat__add_period() function.
 	 */
+	sample->period = cost;
+
 	he = __hists__add_entry(hists, al, iter->parent, NULL, mi,
-				cost, cost, 0, true);
+				sample, true);
 	if (!he)
 		return -ENOMEM;
 
@@ -604,6 +657,7 @@ iter_add_next_branch_entry(struct hist_entry_iter *iter, struct addr_location *a
 	struct branch_info *bi;
 	struct perf_evsel *evsel = iter->evsel;
 	struct hists *hists = evsel__hists(evsel);
+	struct perf_sample *sample = iter->sample;
 	struct hist_entry *he = NULL;
 	int i = iter->curr;
 	int err = 0;
@@ -617,8 +671,11 @@ iter_add_next_branch_entry(struct hist_entry_iter *iter, struct addr_location *a
 	 * The report shows the percentage of total branches captured
 	 * and not events sampled. Thus we use a pseudo period of 1.
 	 */
+	sample->period = 1;
+	sample->weight = bi->flags.cycles ? bi->flags.cycles : 1;
+
 	he = __hists__add_entry(hists, al, iter->parent, &bi[i], NULL,
-				1, 1, 0, true);
+				sample, true);
 	if (he == NULL)
 		return -ENOMEM;
 
@@ -655,8 +712,7 @@ iter_add_single_normal_entry(struct hist_entry_iter *iter, struct addr_location 
 	struct hist_entry *he;
 
 	he = __hists__add_entry(evsel__hists(evsel), al, iter->parent, NULL, NULL,
-				sample->period, sample->weight,
-				sample->transaction, true);
+				sample, true);
 	if (he == NULL)
 		return -ENOMEM;
 
@@ -683,7 +739,7 @@ iter_finish_normal_entry(struct hist_entry_iter *iter,
 }
 
 static int
-iter_prepare_cumulative_entry(struct hist_entry_iter *iter __maybe_unused,
+iter_prepare_cumulative_entry(struct hist_entry_iter *iter,
 			      struct addr_location *al __maybe_unused)
 {
 	struct hist_entry **he_cache;
@@ -695,7 +751,7 @@ iter_prepare_cumulative_entry(struct hist_entry_iter *iter __maybe_unused,
 	 * cumulated only one time to prevent entries more than 100%
 	 * overhead.
 	 */
-	he_cache = malloc(sizeof(*he_cache) * (PERF_MAX_STACK_DEPTH + 1));
+	he_cache = malloc(sizeof(*he_cache) * (iter->max_stack + 1));
 	if (he_cache == NULL)
 		return -ENOMEM;
 
@@ -717,8 +773,7 @@ iter_add_single_cumulative_entry(struct hist_entry_iter *iter,
 	int err = 0;
 
 	he = __hists__add_entry(hists, al, iter->parent, NULL, NULL,
-				sample->period, sample->weight,
-				sample->transaction, true);
+				sample, true);
 	if (he == NULL)
 		return -ENOMEM;
 
@@ -760,6 +815,7 @@ iter_add_next_cumulative_entry(struct hist_entry_iter *iter,
 	struct hist_entry **he_cache = iter->priv;
 	struct hist_entry *he;
 	struct hist_entry he_tmp = {
+		.hists = evsel__hists(evsel),
 		.cpu = al->cpu,
 		.thread = al->thread,
 		.comm = thread__comm(al->thread),
@@ -769,6 +825,8 @@ iter_add_next_cumulative_entry(struct hist_entry_iter *iter,
 			.sym = al->sym,
 		},
 		.parent = iter->parent,
+		.raw_data = sample->raw_data,
+		.raw_size = sample->raw_size,
 	};
 	int i;
 	struct callchain_cursor cursor;
@@ -790,8 +848,7 @@ iter_add_next_cumulative_entry(struct hist_entry_iter *iter,
 	}
 
 	he = __hists__add_entry(evsel__hists(evsel), al, iter->parent, NULL, NULL,
-				sample->period, sample->weight,
-				sample->transaction, false);
+				sample, false);
 	if (he == NULL)
 		return -ENOMEM;
 
@@ -855,6 +912,8 @@ int hist_entry_iter__add(struct hist_entry_iter *iter, struct addr_location *al,
 	if (err)
 		return err;
 
+	iter->max_stack = max_stack_depth;
+
 	err = iter->ops->prepare_entry(iter, al);
 	if (err)
 		goto out;
@@ -896,9 +955,6 @@ hist_entry__cmp(struct hist_entry *left, struct hist_entry *right)
 	int64_t cmp = 0;
 
 	perf_hpp__for_each_sort_list(fmt) {
-		if (perf_hpp__should_skip(fmt))
-			continue;
-
 		cmp = fmt->cmp(fmt, left, right);
 		if (cmp)
 			break;
@@ -914,9 +970,6 @@ hist_entry__collapse(struct hist_entry *left, struct hist_entry *right)
 	int64_t cmp = 0;
 
 	perf_hpp__for_each_sort_list(fmt) {
-		if (perf_hpp__should_skip(fmt))
-			continue;
-
 		cmp = fmt->collapse(fmt, left, right);
 		if (cmp)
 			break;
@@ -944,7 +997,11 @@ void hist_entry__delete(struct hist_entry *he)
 
 	zfree(&he->stat_acc);
 	free_srcline(he->srcline);
+	if (he->srcfile && he->srcfile[0])
+		free(he->srcfile);
 	free_callchain(he->callchain);
+	free(he->trace_output);
+	free(he->raw_data);
 	free(he);
 }
 
@@ -952,9 +1009,8 @@ void hist_entry__delete(struct hist_entry *he)
  * collapse the histogram
  */
 
-static bool hists__collapse_insert_entry(struct hists *hists __maybe_unused,
-					 struct rb_root *root,
-					 struct hist_entry *he)
+bool hists__collapse_insert_entry(struct hists *hists __maybe_unused,
+				  struct rb_root *root, struct hist_entry *he)
 {
 	struct rb_node **p = &root->rb_node;
 	struct rb_node *parent = NULL;
@@ -994,7 +1050,7 @@ static bool hists__collapse_insert_entry(struct hists *hists __maybe_unused,
 	return true;
 }
 
-static struct rb_root *hists__get_rotate_entries_in(struct hists *hists)
+struct rb_root *hists__get_rotate_entries_in(struct hists *hists)
 {
 	struct rb_root *root;
 
@@ -1014,6 +1070,7 @@ static void hists__apply_filters(struct hists *hists, struct hist_entry *he)
 	hists__filter_entry_by_dso(hists, he);
 	hists__filter_entry_by_thread(hists, he);
 	hists__filter_entry_by_symbol(hists, he);
+	hists__filter_entry_by_socket(hists, he);
 }
 
 void hists__collapse_resort(struct hists *hists, struct ui_progress *prog)
@@ -1057,7 +1114,7 @@ static int hist_entry__sort(struct hist_entry *a, struct hist_entry *b)
 	int64_t cmp = 0;
 
 	perf_hpp__for_each_sort_list(fmt) {
-		if (perf_hpp__should_skip(fmt))
+		if (perf_hpp__should_skip(fmt, a->hists))
 			continue;
 
 		cmp = fmt->sort(fmt, a, b);
@@ -1099,13 +1156,14 @@ void hists__inc_stats(struct hists *hists, struct hist_entry *h)
 
 static void __hists__insert_output_entry(struct rb_root *entries,
 					 struct hist_entry *he,
-					 u64 min_callchain_hits)
+					 u64 min_callchain_hits,
+					 bool use_callchain)
 {
 	struct rb_node **p = &entries->rb_node;
 	struct rb_node *parent = NULL;
 	struct hist_entry *iter;
 
-	if (symbol_conf.use_callchain)
+	if (use_callchain)
 		callchain_param.sort(&he->sorted_chain, he->callchain,
 				      min_callchain_hits, &callchain_param);
 
@@ -1129,6 +1187,13 @@ void hists__output_resort(struct hists *hists, struct ui_progress *prog)
 	struct rb_node *next;
 	struct hist_entry *n;
 	u64 min_callchain_hits;
+	struct perf_evsel *evsel = hists_to_evsel(hists);
+	bool use_callchain;
+
+	if (evsel && symbol_conf.use_callchain && !symbol_conf.show_ref_callgraph)
+		use_callchain = evsel->attr.sample_type & PERF_SAMPLE_CALLCHAIN;
+	else
+		use_callchain = symbol_conf.use_callchain;
 
 	min_callchain_hits = hists->stats.total_period * (callchain_param.min_percent / 100);
 
@@ -1147,7 +1212,7 @@ void hists__output_resort(struct hists *hists, struct ui_progress *prog)
 		n = rb_entry(next, struct hist_entry, rb_node_in);
 		next = rb_next(&n->rb_node_in);
 
-		__hists__insert_output_entry(&hists->entries, n, min_callchain_hits);
+		__hists__insert_output_entry(&hists->entries, n, min_callchain_hits, use_callchain);
 		hists__inc_stats(hists, n);
 
 		if (!n->filtered)
@@ -1271,6 +1336,37 @@ void hists__filter_by_symbol(struct hists *hists)
 			continue;
 
 		hists__remove_entry_filter(hists, h, HIST_FILTER__SYMBOL);
+	}
+}
+
+static bool hists__filter_entry_by_socket(struct hists *hists,
+					  struct hist_entry *he)
+{
+	if ((hists->socket_filter > -1) &&
+	    (he->socket != hists->socket_filter)) {
+		he->filtered |= (1 << HIST_FILTER__SOCKET);
+		return true;
+	}
+
+	return false;
+}
+
+void hists__filter_by_socket(struct hists *hists)
+{
+	struct rb_node *nd;
+
+	hists->stats.nr_non_filtered_samples = 0;
+
+	hists__reset_filter_stats(hists);
+	hists__reset_col_len(hists);
+
+	for (nd = rb_first(&hists->entries); nd; nd = rb_next(nd)) {
+		struct hist_entry *h = rb_entry(nd, struct hist_entry, rb_node);
+
+		if (hists__filter_entry_by_socket(hists, h))
+			continue;
+
+		hists__remove_entry_filter(hists, h, HIST_FILTER__SOCKET);
 	}
 }
 
@@ -1414,6 +1510,39 @@ int hists__link(struct hists *leader, struct hists *other)
 	return 0;
 }
 
+void hist__account_cycles(struct branch_stack *bs, struct addr_location *al,
+			  struct perf_sample *sample, bool nonany_branch_mode)
+{
+	struct branch_info *bi;
+
+	/* If we have branch cycles always annotate them. */
+	if (bs && bs->nr && bs->entries[0].flags.cycles) {
+		int i;
+
+		bi = sample__resolve_bstack(sample, al);
+		if (bi) {
+			struct addr_map_symbol *prev = NULL;
+
+			/*
+			 * Ignore errors, still want to process the
+			 * other entries.
+			 *
+			 * For non standard branch modes always
+			 * force no IPC (prev == NULL)
+			 *
+			 * Note that perf stores branches reversed from
+			 * program order!
+			 */
+			for (i = bs->nr - 1; i >= 0; i--) {
+				addr_map_symbol__account_cycles(&bi[i].from,
+					nonany_branch_mode ? NULL : prev,
+					bi[i].flags.cycles);
+				prev = &bi[i].to;
+			}
+			free(bi);
+		}
+	}
+}
 
 size_t perf_evlist__fprintf_nr_events(struct perf_evlist *evlist, FILE *fp)
 {
@@ -1456,16 +1585,52 @@ int perf_hist_config(const char *var, const char *value)
 	return 0;
 }
 
-static int hists_evsel__init(struct perf_evsel *evsel)
+int __hists__init(struct hists *hists)
 {
-	struct hists *hists = evsel__hists(evsel);
-
 	memset(hists, 0, sizeof(*hists));
 	hists->entries_in_array[0] = hists->entries_in_array[1] = RB_ROOT;
 	hists->entries_in = &hists->entries_in_array[0];
 	hists->entries_collapsed = RB_ROOT;
 	hists->entries = RB_ROOT;
 	pthread_mutex_init(&hists->lock, NULL);
+	hists->socket_filter = -1;
+	return 0;
+}
+
+static void hists__delete_remaining_entries(struct rb_root *root)
+{
+	struct rb_node *node;
+	struct hist_entry *he;
+
+	while (!RB_EMPTY_ROOT(root)) {
+		node = rb_first(root);
+		rb_erase(node, root);
+
+		he = rb_entry(node, struct hist_entry, rb_node_in);
+		hist_entry__delete(he);
+	}
+}
+
+static void hists__delete_all_entries(struct hists *hists)
+{
+	hists__delete_entries(hists);
+	hists__delete_remaining_entries(&hists->entries_in_array[0]);
+	hists__delete_remaining_entries(&hists->entries_in_array[1]);
+	hists__delete_remaining_entries(&hists->entries_collapsed);
+}
+
+static void hists_evsel__exit(struct perf_evsel *evsel)
+{
+	struct hists *hists = evsel__hists(evsel);
+
+	hists__delete_all_entries(hists);
+}
+
+static int hists_evsel__init(struct perf_evsel *evsel)
+{
+	struct hists *hists = evsel__hists(evsel);
+
+	__hists__init(hists);
 	return 0;
 }
 
@@ -1477,7 +1642,8 @@ static int hists_evsel__init(struct perf_evsel *evsel)
 int hists__init(void)
 {
 	int err = perf_evsel__object_config(sizeof(struct hists_evsel),
-					    hists_evsel__init, NULL);
+					    hists_evsel__init,
+					    hists_evsel__exit);
 	if (err)
 		fputs("FATAL ERROR: Couldn't setup hists class\n", stderr);
 

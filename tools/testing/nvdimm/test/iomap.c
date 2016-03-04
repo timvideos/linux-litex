@@ -16,6 +16,7 @@
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/io.h>
+#include <linux/mm.h>
 #include "nfit_test.h"
 
 static LIST_HEAD(iomap_head);
@@ -41,7 +42,7 @@ void nfit_test_teardown(void)
 }
 EXPORT_SYMBOL(nfit_test_teardown);
 
-static struct nfit_test_resource *get_nfit_res(resource_size_t resource)
+static struct nfit_test_resource *__get_nfit_res(resource_size_t resource)
 {
 	struct iomap_ops *ops;
 
@@ -51,14 +52,22 @@ static struct nfit_test_resource *get_nfit_res(resource_size_t resource)
 	return NULL;
 }
 
+static struct nfit_test_resource *get_nfit_res(resource_size_t resource)
+{
+	struct nfit_test_resource *res;
+
+	rcu_read_lock();
+	res = __get_nfit_res(resource);
+	rcu_read_unlock();
+
+	return res;
+}
+
 void __iomem *__nfit_test_ioremap(resource_size_t offset, unsigned long size,
 		void __iomem *(*fallback_fn)(resource_size_t, unsigned long))
 {
-	struct nfit_test_resource *nfit_res;
+	struct nfit_test_resource *nfit_res = get_nfit_res(offset);
 
-	rcu_read_lock();
-	nfit_res = get_nfit_res(offset);
-	rcu_read_unlock();
 	if (nfit_res)
 		return (void __iomem *) nfit_res->buf + offset
 			- nfit_res->res->start;
@@ -68,11 +77,8 @@ void __iomem *__nfit_test_ioremap(resource_size_t offset, unsigned long size,
 void __iomem *__wrap_devm_ioremap_nocache(struct device *dev,
 		resource_size_t offset, unsigned long size)
 {
-	struct nfit_test_resource *nfit_res;
+	struct nfit_test_resource *nfit_res = get_nfit_res(offset);
 
-	rcu_read_lock();
-	nfit_res = get_nfit_res(offset);
-	rcu_read_unlock();
 	if (nfit_res)
 		return (void __iomem *) nfit_res->buf + offset
 			- nfit_res->res->start;
@@ -80,23 +86,82 @@ void __iomem *__wrap_devm_ioremap_nocache(struct device *dev,
 }
 EXPORT_SYMBOL(__wrap_devm_ioremap_nocache);
 
-void __iomem *__wrap_ioremap_cache(resource_size_t offset, unsigned long size)
+void *__wrap_devm_memremap(struct device *dev, resource_size_t offset,
+		size_t size, unsigned long flags)
 {
-	return __nfit_test_ioremap(offset, size, ioremap_cache);
+	struct nfit_test_resource *nfit_res = get_nfit_res(offset);
+
+	if (nfit_res)
+		return nfit_res->buf + offset - nfit_res->res->start;
+	return devm_memremap(dev, offset, size, flags);
 }
-EXPORT_SYMBOL(__wrap_ioremap_cache);
+EXPORT_SYMBOL(__wrap_devm_memremap);
+
+#ifdef __HAVE_ARCH_PTE_DEVMAP
+#include <linux/memremap.h>
+#include <linux/pfn_t.h>
+
+void *__wrap_devm_memremap_pages(struct device *dev, struct resource *res,
+		struct percpu_ref *ref, struct vmem_altmap *altmap)
+{
+	resource_size_t offset = res->start;
+	struct nfit_test_resource *nfit_res = get_nfit_res(offset);
+
+	if (nfit_res)
+		return nfit_res->buf + offset - nfit_res->res->start;
+	return devm_memremap_pages(dev, res, ref, altmap);
+}
+EXPORT_SYMBOL(__wrap_devm_memremap_pages);
+
+pfn_t __wrap_phys_to_pfn_t(phys_addr_t addr, unsigned long flags)
+{
+	struct nfit_test_resource *nfit_res = get_nfit_res(addr);
+
+	if (nfit_res)
+		flags &= ~PFN_MAP;
+        return phys_to_pfn_t(addr, flags);
+}
+EXPORT_SYMBOL(__wrap_phys_to_pfn_t);
+#else
+/* to be removed post 4.5-rc1 */
+void *__wrap_devm_memremap_pages(struct device *dev, struct resource *res)
+{
+	resource_size_t offset = res->start;
+	struct nfit_test_resource *nfit_res = get_nfit_res(offset);
+
+	if (nfit_res)
+		return nfit_res->buf + offset - nfit_res->res->start;
+	return devm_memremap_pages(dev, res);
+}
+EXPORT_SYMBOL(__wrap_devm_memremap_pages);
+#endif
+
+void *__wrap_memremap(resource_size_t offset, size_t size,
+		unsigned long flags)
+{
+	struct nfit_test_resource *nfit_res = get_nfit_res(offset);
+
+	if (nfit_res)
+		return nfit_res->buf + offset - nfit_res->res->start;
+	return memremap(offset, size, flags);
+}
+EXPORT_SYMBOL(__wrap_memremap);
+
+void __wrap_devm_memunmap(struct device *dev, void *addr)
+{
+	struct nfit_test_resource *nfit_res = get_nfit_res((long) addr);
+
+	if (nfit_res)
+		return;
+	return devm_memunmap(dev, addr);
+}
+EXPORT_SYMBOL(__wrap_devm_memunmap);
 
 void __iomem *__wrap_ioremap_nocache(resource_size_t offset, unsigned long size)
 {
 	return __nfit_test_ioremap(offset, size, ioremap_nocache);
 }
 EXPORT_SYMBOL(__wrap_ioremap_nocache);
-
-void __iomem *__wrap_ioremap_wt(resource_size_t offset, unsigned long size)
-{
-	return __nfit_test_ioremap(offset, size, ioremap_wt);
-}
-EXPORT_SYMBOL(__wrap_ioremap_wt);
 
 void __iomem *__wrap_ioremap_wc(resource_size_t offset, unsigned long size)
 {
@@ -106,27 +171,31 @@ EXPORT_SYMBOL(__wrap_ioremap_wc);
 
 void __wrap_iounmap(volatile void __iomem *addr)
 {
-	struct nfit_test_resource *nfit_res;
-
-	rcu_read_lock();
-	nfit_res = get_nfit_res((unsigned long) addr);
-	rcu_read_unlock();
+	struct nfit_test_resource *nfit_res = get_nfit_res((long) addr);
 	if (nfit_res)
 		return;
 	return iounmap(addr);
 }
 EXPORT_SYMBOL(__wrap_iounmap);
 
-struct resource *__wrap___request_region(struct resource *parent,
-		resource_size_t start, resource_size_t n, const char *name,
-		int flags)
+void __wrap_memunmap(void *addr)
+{
+	struct nfit_test_resource *nfit_res = get_nfit_res((long) addr);
+
+	if (nfit_res)
+		return;
+	return memunmap(addr);
+}
+EXPORT_SYMBOL(__wrap_memunmap);
+
+static struct resource *nfit_test_request_region(struct device *dev,
+		struct resource *parent, resource_size_t start,
+		resource_size_t n, const char *name, int flags)
 {
 	struct nfit_test_resource *nfit_res;
 
 	if (parent == &iomem_resource) {
-		rcu_read_lock();
 		nfit_res = get_nfit_res(start);
-		rcu_read_unlock();
 		if (nfit_res) {
 			struct resource *res = nfit_res->res + 1;
 
@@ -147,9 +216,28 @@ struct resource *__wrap___request_region(struct resource *parent,
 			return res;
 		}
 	}
+	if (dev)
+		return __devm_request_region(dev, parent, start, n, name);
 	return __request_region(parent, start, n, name, flags);
 }
+
+struct resource *__wrap___request_region(struct resource *parent,
+		resource_size_t start, resource_size_t n, const char *name,
+		int flags)
+{
+	return nfit_test_request_region(NULL, parent, start, n, name, flags);
+}
 EXPORT_SYMBOL(__wrap___request_region);
+
+struct resource *__wrap___devm_request_region(struct device *dev,
+		struct resource *parent, resource_size_t start,
+		resource_size_t n, const char *name)
+{
+	if (!dev)
+		return NULL;
+	return nfit_test_request_region(dev, parent, start, n, name, 0);
+}
+EXPORT_SYMBOL(__wrap___devm_request_region);
 
 void __wrap___release_region(struct resource *parent, resource_size_t start,
 				resource_size_t n)
@@ -157,9 +245,7 @@ void __wrap___release_region(struct resource *parent, resource_size_t start,
 	struct nfit_test_resource *nfit_res;
 
 	if (parent == &iomem_resource) {
-		rcu_read_lock();
 		nfit_res = get_nfit_res(start);
-		rcu_read_unlock();
 		if (nfit_res) {
 			struct resource *res = nfit_res->res + 1;
 

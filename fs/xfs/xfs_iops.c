@@ -414,12 +414,16 @@ xfs_vn_rename(
  * uio is kmalloced for this reason...
  */
 STATIC const char *
-xfs_vn_follow_link(
+xfs_vn_get_link(
 	struct dentry		*dentry,
-	void			**cookie)
+	struct inode		*inode,
+	struct delayed_call	*done)
 {
 	char			*link;
 	int			error = -ENOMEM;
+
+	if (!dentry)
+		return ERR_PTR(-ECHILD);
 
 	link = kmalloc(MAXPATHLEN+1, GFP_KERNEL);
 	if (!link)
@@ -429,7 +433,8 @@ xfs_vn_follow_link(
 	if (unlikely(error))
 		goto out_kfree;
 
-	return *cookie = link;
+	set_delayed_call(done, kfree_link, link);
+	return link;
 
  out_kfree:
 	kfree(link);
@@ -609,7 +614,7 @@ xfs_setattr_nonsize(
 	tp = xfs_trans_alloc(mp, XFS_TRANS_SETATTR_NOT_SIZE);
 	error = xfs_trans_reserve(tp, &M_RES(mp)->tr_ichange, 0, 0);
 	if (error)
-		goto out_dqrele;
+		goto out_trans_cancel;
 
 	xfs_ilock(ip, XFS_ILOCK_EXCL);
 
@@ -640,7 +645,7 @@ xfs_setattr_nonsize(
 						NULL, capable(CAP_FOWNER) ?
 						XFS_QMOPT_FORCE_RES : 0);
 			if (error)	/* out of quota */
-				goto out_trans_cancel;
+				goto out_unlock;
 		}
 	}
 
@@ -695,7 +700,7 @@ xfs_setattr_nonsize(
 
 	xfs_trans_log_inode(tp, ip, XFS_ILOG_CORE);
 
-	XFS_STATS_INC(xs_ig_attrchg);
+	XFS_STATS_INC(mp, xs_ig_attrchg);
 
 	if (mp->m_flags & XFS_MOUNT_WSYNC)
 		xfs_trans_set_sync(tp);
@@ -729,10 +734,10 @@ xfs_setattr_nonsize(
 
 	return 0;
 
+out_unlock:
+	xfs_iunlock(ip, XFS_ILOCK_EXCL);
 out_trans_cancel:
 	xfs_trans_cancel(tp);
-	xfs_iunlock(ip, XFS_ILOCK_EXCL);
-out_dqrele:
 	xfs_qm_dqrele(udqp);
 	xfs_qm_dqrele(gdqp);
 	return error;
@@ -922,7 +927,7 @@ xfs_setattr_size(
 
 	xfs_trans_log_inode(tp, ip, XFS_ILOG_CORE);
 
-	XFS_STATS_INC(xs_ig_attrchg);
+	XFS_STATS_INC(mp, xs_ig_attrchg);
 
 	if (mp->m_flags & XFS_MOUNT_WSYNC)
 		xfs_trans_set_sync(tp);
@@ -1172,8 +1177,7 @@ static const struct inode_operations xfs_dir_ci_inode_operations = {
 
 static const struct inode_operations xfs_symlink_inode_operations = {
 	.readlink		= generic_readlink,
-	.follow_link		= xfs_vn_follow_link,
-	.put_link		= kfree_put_link,
+	.get_link		= xfs_vn_get_link,
 	.getattr		= xfs_vn_getattr,
 	.setattr		= xfs_vn_setattr,
 	.setxattr		= generic_setxattr,
@@ -1201,8 +1205,8 @@ xfs_diflags_to_iflags(
 		inode->i_flags |= S_SYNC;
 	if (flags & XFS_DIFLAG_NOATIME)
 		inode->i_flags |= S_NOATIME;
-	/* XXX: Also needs an on-disk per inode flag! */
-	if (ip->i_mount->m_flags & XFS_MOUNT_DAX)
+	if (ip->i_mount->m_flags & XFS_MOUNT_DAX ||
+	    ip->i_d.di_flags2 & XFS_DIFLAG2_DAX)
 		inode->i_flags |= S_DAX;
 }
 

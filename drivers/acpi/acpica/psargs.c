@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2015, Intel Corp.
+ * Copyright (C) 2000 - 2016, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -269,7 +269,8 @@ acpi_ps_get_next_namepath(struct acpi_walk_state *walk_state,
 	 */
 	if (ACPI_SUCCESS(status) &&
 	    possible_method_call && (node->type == ACPI_TYPE_METHOD)) {
-		if (walk_state->opcode == AML_UNLOAD_OP) {
+		if (GET_CURRENT_ARG_TYPE(walk_state->arg_types) ==
+		    ARGP_SUPERNAME) {
 			/*
 			 * acpi_ps_get_next_namestring has increased the AML pointer,
 			 * so we need to restore the saved AML pointer for method call.
@@ -287,7 +288,7 @@ acpi_ps_get_next_namepath(struct acpi_walk_state *walk_state,
 				  "Control Method - %p Desc %p Path=%p\n", node,
 				  method_desc, path));
 
-		name_op = acpi_ps_alloc_op(AML_INT_NAMEPATH_OP);
+		name_op = acpi_ps_alloc_op(AML_INT_NAMEPATH_OP, start);
 		if (!name_op) {
 			return_ACPI_STATUS(AE_NO_MEMORY);
 		}
@@ -484,7 +485,7 @@ acpi_ps_get_next_simple_arg(struct acpi_parse_state *parser_state,
 static union acpi_parse_object *acpi_ps_get_next_field(struct acpi_parse_state
 						       *parser_state)
 {
-	u32 aml_offset;
+	u8 *aml;
 	union acpi_parse_object *field;
 	union acpi_parse_object *arg = NULL;
 	u16 opcode;
@@ -498,8 +499,7 @@ static union acpi_parse_object *acpi_ps_get_next_field(struct acpi_parse_state
 
 	ACPI_FUNCTION_TRACE(ps_get_next_field);
 
-	aml_offset =
-	    (u32)ACPI_PTR_DIFF(parser_state->aml, parser_state->aml_start);
+	aml = parser_state->aml;
 
 	/* Determine field type */
 
@@ -536,12 +536,10 @@ static union acpi_parse_object *acpi_ps_get_next_field(struct acpi_parse_state
 
 	/* Allocate a new field op */
 
-	field = acpi_ps_alloc_op(opcode);
+	field = acpi_ps_alloc_op(opcode, aml);
 	if (!field) {
 		return_PTR(NULL);
 	}
-
-	field->common.aml_offset = aml_offset;
 
 	/* Decode the field type */
 
@@ -604,6 +602,7 @@ static union acpi_parse_object *acpi_ps_get_next_field(struct acpi_parse_state
 		 * Argument for Connection operator can be either a Buffer
 		 * (resource descriptor), or a name_string.
 		 */
+		aml = parser_state->aml;
 		if (ACPI_GET8(parser_state->aml) == AML_BUFFER_OP) {
 			parser_state->aml++;
 
@@ -616,7 +615,8 @@ static union acpi_parse_object *acpi_ps_get_next_field(struct acpi_parse_state
 
 				/* Non-empty list */
 
-				arg = acpi_ps_alloc_op(AML_INT_BYTELIST_OP);
+				arg =
+				    acpi_ps_alloc_op(AML_INT_BYTELIST_OP, aml);
 				if (!arg) {
 					acpi_ps_free_op(field);
 					return_PTR(NULL);
@@ -665,7 +665,7 @@ static union acpi_parse_object *acpi_ps_get_next_field(struct acpi_parse_state
 
 			parser_state->aml = pkg_end;
 		} else {
-			arg = acpi_ps_alloc_op(AML_INT_NAMEPATH_OP);
+			arg = acpi_ps_alloc_op(AML_INT_NAMEPATH_OP, aml);
 			if (!arg) {
 				acpi_ps_free_op(field);
 				return_PTR(NULL);
@@ -697,7 +697,7 @@ static union acpi_parse_object *acpi_ps_get_next_field(struct acpi_parse_state
  *
  * PARAMETERS:  walk_state          - Current state
  *              parser_state        - Current parser state object
- *              arg_type            - The argument type (AML_*_ARG)
+ *              arg_type            - The parser argument type (ARGP_*)
  *              return_arg          - Where the next arg is returned
  *
  * RETURN:      Status, and an op object containing the next argument.
@@ -730,10 +730,11 @@ acpi_ps_get_next_arg(struct acpi_walk_state *walk_state,
 
 		/* Constants, strings, and namestrings are all the same size */
 
-		arg = acpi_ps_alloc_op(AML_BYTE_OP);
+		arg = acpi_ps_alloc_op(AML_BYTE_OP, parser_state->aml);
 		if (!arg) {
 			return_ACPI_STATUS(AE_NO_MEMORY);
 		}
+
 		acpi_ps_get_next_simple_arg(parser_state, arg_type, arg);
 		break;
 
@@ -777,7 +778,8 @@ acpi_ps_get_next_arg(struct acpi_walk_state *walk_state,
 
 			/* Non-empty list */
 
-			arg = acpi_ps_alloc_op(AML_INT_BYTELIST_OP);
+			arg = acpi_ps_alloc_op(AML_INT_BYTELIST_OP,
+					       parser_state->aml);
 			if (!arg) {
 				return_ACPI_STATUS(AE_NO_MEMORY);
 			}
@@ -798,6 +800,7 @@ acpi_ps_get_next_arg(struct acpi_walk_state *walk_state,
 	case ARGP_TARGET:
 	case ARGP_SUPERNAME:
 	case ARGP_SIMPLENAME:
+	case ARGP_NAME_OR_REF:
 
 		subop = acpi_ps_peek_opcode(parser_state);
 		if (subop == 0 ||
@@ -807,22 +810,24 @@ acpi_ps_get_next_arg(struct acpi_walk_state *walk_state,
 
 			/* null_name or name_string */
 
-			arg = acpi_ps_alloc_op(AML_INT_NAMEPATH_OP);
+			arg =
+			    acpi_ps_alloc_op(AML_INT_NAMEPATH_OP,
+					     parser_state->aml);
 			if (!arg) {
 				return_ACPI_STATUS(AE_NO_MEMORY);
 			}
 
-			/* To support super_name arg of Unload */
+			/* super_name allows argument to be a method call */
 
-			if (walk_state->opcode == AML_UNLOAD_OP) {
+			if (arg_type == ARGP_SUPERNAME) {
 				status =
 				    acpi_ps_get_next_namepath(walk_state,
 							      parser_state, arg,
-							      1);
+							      ACPI_POSSIBLE_METHOD_CALL);
 
 				/*
-				 * If the super_name arg of Unload is a method call,
-				 * we have restored the AML pointer, just free this Arg
+				 * If the super_name argument is a method call, we have
+				 * already restored the AML pointer, just free this Arg
 				 */
 				if (arg->common.aml_opcode ==
 				    AML_INT_METHODCALL_OP) {
@@ -833,7 +838,7 @@ acpi_ps_get_next_arg(struct acpi_walk_state *walk_state,
 				status =
 				    acpi_ps_get_next_namepath(walk_state,
 							      parser_state, arg,
-							      0);
+							      ACPI_NOT_METHOD_CALL);
 			}
 		} else {
 			/* Single complex argument, nothing returned */

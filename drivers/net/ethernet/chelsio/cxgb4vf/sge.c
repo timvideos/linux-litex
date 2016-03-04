@@ -1898,7 +1898,10 @@ static int napi_rx_handler(struct napi_struct *napi, int budget)
 		rspq->unhandled_irqs++;
 
 	val = CIDXINC_V(work_done) | SEINTARM_V(intr_params);
-	if (is_t4(rspq->adapter->params.chip)) {
+	/* If we don't have access to the new User GTS (T5+), use the old
+	 * doorbell mechanism; otherwise use the new BAR2 mechanism.
+	 */
+	if (unlikely(!rspq->bar2_addr)) {
 		t4_write_reg(rspq->adapter,
 			     T4VF_SGE_BASE_ADDR + SGE_VF_GTS,
 			     val | INGRESSQID_V((u32)rspq->cntxt_id));
@@ -1998,10 +2001,13 @@ static unsigned int process_intrq(struct adapter *adapter)
 	}
 
 	val = CIDXINC_V(work_done) | SEINTARM_V(intrq->intr_params);
-	if (is_t4(adapter->params.chip))
+	/* If we don't have access to the new User GTS (T5+), use the old
+	 * doorbell mechanism; otherwise use the new BAR2 mechanism.
+	 */
+	if (unlikely(!intrq->bar2_addr)) {
 		t4_write_reg(adapter, T4VF_SGE_BASE_ADDR + SGE_VF_GTS,
 			     val | INGRESSQID_V(intrq->cntxt_id));
-	else {
+	} else {
 		writel(val | INGRESSQID_V(intrq->bar2_qid),
 		       intrq->bar2_addr + SGE_UDB_GTS);
 		wmb();
@@ -2601,7 +2607,7 @@ int t4vf_sge_init(struct adapter *adapter)
 	u32 fl0 = sge_params->sge_fl_buffer_size[0];
 	u32 fl1 = sge_params->sge_fl_buffer_size[1];
 	struct sge *s = &adapter->sge;
-	unsigned int ingpadboundary, ingpackboundary;
+	unsigned int ingpadboundary, ingpackboundary, ingpad_shift;
 
 	/*
 	 * Start by vetting the basic SGE parameters which have been set up by
@@ -2636,9 +2642,16 @@ int t4vf_sge_init(struct adapter *adapter)
 	 * could set the chip up that way and, in fact, legacy T4 code would
 	 * end doing this because it would initialize the Padding Boundary and
 	 * leave the Packing Boundary initialized to 0 (16 bytes).)
+	 * Padding Boundary values in T6 starts from 8B,
+	 * where as it is 32B for T4 and T5.
 	 */
+	if (CHELSIO_CHIP_VERSION(adapter->params.chip) <= CHELSIO_T5)
+		ingpad_shift = INGPADBOUNDARY_SHIFT_X;
+	else
+		ingpad_shift = T6_INGPADBOUNDARY_SHIFT_X;
+
 	ingpadboundary = 1 << (INGPADBOUNDARY_G(sge_params->sge_control) +
-			       INGPADBOUNDARY_SHIFT_X);
+			       ingpad_shift);
 	if (is_t4(adapter->params.chip)) {
 		s->fl_align = ingpadboundary;
 	} else {
@@ -2662,8 +2675,22 @@ int t4vf_sge_init(struct adapter *adapter)
 	 * give it more Free List entries.  (Note that the SGE's Egress
 	 * Congestion Threshold is in units of 2 Free List pointers.)
 	 */
-	s->fl_starve_thres
-		= EGRTHRESHOLD_G(sge_params->sge_congestion_control)*2 + 1;
+	switch (CHELSIO_CHIP_VERSION(adapter->params.chip)) {
+	case CHELSIO_T4:
+		s->fl_starve_thres =
+		   EGRTHRESHOLD_G(sge_params->sge_congestion_control);
+		break;
+	case CHELSIO_T5:
+		s->fl_starve_thres =
+		   EGRTHRESHOLDPACKING_G(sge_params->sge_congestion_control);
+		break;
+	case CHELSIO_T6:
+	default:
+		s->fl_starve_thres =
+		   T6_EGRTHRESHOLDPACKING_G(sge_params->sge_congestion_control);
+		break;
+	}
+	s->fl_starve_thres = s->fl_starve_thres * 2 + 1;
 
 	/*
 	 * Set up tasklet timers.

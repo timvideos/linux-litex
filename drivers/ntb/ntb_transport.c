@@ -119,7 +119,8 @@ struct ntb_transport_qp {
 	struct ntb_transport_ctx *transport;
 	struct ntb_dev *ndev;
 	void *cb_data;
-	struct dma_chan *dma_chan;
+	struct dma_chan *tx_dma_chan;
+	struct dma_chan *rx_dma_chan;
 
 	bool client_ready;
 	bool link_is_up;
@@ -170,12 +171,14 @@ struct ntb_transport_qp {
 	u64 rx_err_ver;
 	u64 rx_memcpy;
 	u64 rx_async;
+	u64 dma_rx_prep_err;
 	u64 tx_bytes;
 	u64 tx_pkts;
 	u64 tx_ring_full;
 	u64 tx_err_no_buf;
 	u64 tx_memcpy;
 	u64 tx_async;
+	u64 dma_tx_prep_err;
 };
 
 struct ntb_transport_mw {
@@ -248,6 +251,8 @@ enum {
 #define QP_TO_MW(nt, qp)	((qp) % nt->mw_count)
 #define NTB_QP_DEF_NUM_ENTRIES	100
 #define NTB_LINK_DOWN_TIMEOUT	10
+#define DMA_RETRIES		20
+#define DMA_OUT_RESOURCE_TO	50
 
 static void ntb_transport_rxc_db(unsigned long data);
 static const struct ntb_ctx_ops ntb_transport_ops;
@@ -297,7 +302,7 @@ static LIST_HEAD(ntb_transport_list);
 
 static int ntb_bus_init(struct ntb_transport_ctx *nt)
 {
-	list_add(&nt->entry, &ntb_transport_list);
+	list_add_tail(&nt->entry, &ntb_transport_list);
 	return 0;
 }
 
@@ -452,7 +457,7 @@ static ssize_t debugfs_read(struct file *filp, char __user *ubuf, size_t count,
 
 	out_offset = 0;
 	out_offset += snprintf(buf + out_offset, out_count - out_offset,
-			       "NTB QP stats\n");
+			       "\nNTB QP stats:\n\n");
 	out_offset += snprintf(buf + out_offset, out_count - out_offset,
 			       "rx_bytes - \t%llu\n", qp->rx_bytes);
 	out_offset += snprintf(buf + out_offset, out_count - out_offset,
@@ -470,11 +475,11 @@ static ssize_t debugfs_read(struct file *filp, char __user *ubuf, size_t count,
 	out_offset += snprintf(buf + out_offset, out_count - out_offset,
 			       "rx_err_ver - \t%llu\n", qp->rx_err_ver);
 	out_offset += snprintf(buf + out_offset, out_count - out_offset,
-			       "rx_buff - \t%p\n", qp->rx_buff);
+			       "rx_buff - \t0x%p\n", qp->rx_buff);
 	out_offset += snprintf(buf + out_offset, out_count - out_offset,
 			       "rx_index - \t%u\n", qp->rx_index);
 	out_offset += snprintf(buf + out_offset, out_count - out_offset,
-			       "rx_max_entry - \t%u\n", qp->rx_max_entry);
+			       "rx_max_entry - \t%u\n\n", qp->rx_max_entry);
 
 	out_offset += snprintf(buf + out_offset, out_count - out_offset,
 			       "tx_bytes - \t%llu\n", qp->tx_bytes);
@@ -489,15 +494,38 @@ static ssize_t debugfs_read(struct file *filp, char __user *ubuf, size_t count,
 	out_offset += snprintf(buf + out_offset, out_count - out_offset,
 			       "tx_err_no_buf - %llu\n", qp->tx_err_no_buf);
 	out_offset += snprintf(buf + out_offset, out_count - out_offset,
-			       "tx_mw - \t%p\n", qp->tx_mw);
+			       "tx_mw - \t0x%p\n", qp->tx_mw);
 	out_offset += snprintf(buf + out_offset, out_count - out_offset,
-			       "tx_index - \t%u\n", qp->tx_index);
+			       "tx_index (H) - \t%u\n", qp->tx_index);
+	out_offset += snprintf(buf + out_offset, out_count - out_offset,
+			       "RRI (T) - \t%u\n",
+			       qp->remote_rx_info->entry);
 	out_offset += snprintf(buf + out_offset, out_count - out_offset,
 			       "tx_max_entry - \t%u\n", qp->tx_max_entry);
+	out_offset += snprintf(buf + out_offset, out_count - out_offset,
+			       "free tx - \t%u\n",
+			       ntb_transport_tx_free_entry(qp));
+	out_offset += snprintf(buf + out_offset, out_count - out_offset,
+			       "DMA tx prep err - \t%llu\n",
+			       qp->dma_tx_prep_err);
+	out_offset += snprintf(buf + out_offset, out_count - out_offset,
+			       "DMA rx prep err - \t%llu\n",
+			       qp->dma_rx_prep_err);
 
 	out_offset += snprintf(buf + out_offset, out_count - out_offset,
-			       "\nQP Link %s\n",
+			       "\n");
+	out_offset += snprintf(buf + out_offset, out_count - out_offset,
+			       "Using TX DMA - \t%s\n",
+			       qp->tx_dma_chan ? "Yes" : "No");
+	out_offset += snprintf(buf + out_offset, out_count - out_offset,
+			       "Using RX DMA - \t%s\n",
+			       qp->rx_dma_chan ? "Yes" : "No");
+	out_offset += snprintf(buf + out_offset, out_count - out_offset,
+			       "QP Link - \t%s\n",
 			       qp->link_is_up ? "Up" : "Down");
+	out_offset += snprintf(buf + out_offset, out_count - out_offset,
+			       "\n");
+
 	if (out_offset > out_count)
 		out_offset = out_count;
 
@@ -535,6 +563,7 @@ static struct ntb_queue_entry *ntb_list_rm(spinlock_t *lock,
 	}
 	entry = list_first_entry(list, struct ntb_queue_entry, entry);
 	list_del(&entry->entry);
+
 out:
 	spin_unlock_irqrestore(lock, flags);
 
@@ -586,7 +615,7 @@ static int ntb_transport_setup_qp_mw(struct ntb_transport_ctx *nt,
 		num_qps_mw = qp_count / mw_count;
 
 	rx_size = (unsigned int)mw->xlat_size / num_qps_mw;
-	qp->rx_buff = mw->virt_addr + rx_size * qp_num / mw_count;
+	qp->rx_buff = mw->virt_addr + rx_size * (qp_num / mw_count);
 	rx_size -= sizeof(struct ntb_rx_info);
 
 	qp->remote_rx_info = qp->rx_buff + rx_size;
@@ -707,6 +736,8 @@ static void ntb_qp_link_down_reset(struct ntb_transport_qp *qp)
 	qp->tx_err_no_buf = 0;
 	qp->tx_memcpy = 0;
 	qp->tx_async = 0;
+	qp->dma_tx_prep_err = 0;
+	qp->dma_rx_prep_err = 0;
 }
 
 static void ntb_qp_link_cleanup(struct ntb_transport_qp *qp)
@@ -806,10 +837,10 @@ static void ntb_transport_link_work(struct work_struct *work)
 			size = max_mw_size;
 
 		spad = MW0_SZ_HIGH + (i * 2);
-		ntb_peer_spad_write(ndev, spad, (u32)(size >> 32));
+		ntb_peer_spad_write(ndev, spad, upper_32_bits(size));
 
 		spad = MW0_SZ_LOW + (i * 2);
-		ntb_peer_spad_write(ndev, spad, (u32)size);
+		ntb_peer_spad_write(ndev, spad, lower_32_bits(size));
 	}
 
 	ntb_peer_spad_write(ndev, NUM_MWS, nt->mw_count);
@@ -909,7 +940,6 @@ static int ntb_transport_init_queue(struct ntb_transport_ctx *nt,
 				    unsigned int qp_num)
 {
 	struct ntb_transport_qp *qp;
-	struct ntb_transport_mw *mw;
 	phys_addr_t mw_base;
 	resource_size_t mw_size;
 	unsigned int num_qps_mw, tx_size;
@@ -920,7 +950,6 @@ static int ntb_transport_init_queue(struct ntb_transport_ctx *nt,
 	qp_count = nt->qp_count;
 
 	mw_num = QP_TO_MW(nt, qp_num);
-	mw = &nt->mw_vec[mw_num];
 
 	qp = &nt->qp_vec[qp_num];
 	qp->qp_num = qp_num;
@@ -939,7 +968,7 @@ static int ntb_transport_init_queue(struct ntb_transport_ctx *nt,
 	mw_size = nt->mw_vec[mw_num].phys_size;
 
 	tx_size = (unsigned int)mw_size / num_qps_mw;
-	qp_offset = tx_size * qp_num / mw_count;
+	qp_offset = tx_size * (qp_num / mw_count);
 
 	qp->tx_mw = nt->mw_vec[mw_num].vbase + qp_offset;
 	if (!qp->tx_mw)
@@ -1061,7 +1090,7 @@ static int ntb_transport_probe(struct ntb_client *self, struct ntb_dev *ndev)
 				  GFP_KERNEL, node);
 	if (!nt->qp_vec) {
 		rc = -ENOMEM;
-		goto err2;
+		goto err1;
 	}
 
 	if (nt_debugfs_dir) {
@@ -1073,7 +1102,7 @@ static int ntb_transport_probe(struct ntb_client *self, struct ntb_dev *ndev)
 	for (i = 0; i < qp_count; i++) {
 		rc = ntb_transport_init_queue(nt, i);
 		if (rc)
-			goto err3;
+			goto err2;
 	}
 
 	INIT_DELAYED_WORK(&nt->link_work, ntb_transport_link_work);
@@ -1081,12 +1110,12 @@ static int ntb_transport_probe(struct ntb_client *self, struct ntb_dev *ndev)
 
 	rc = ntb_set_ctx(ndev, nt, &ntb_transport_ops);
 	if (rc)
-		goto err3;
+		goto err2;
 
 	INIT_LIST_HEAD(&nt->client_devs);
 	rc = ntb_bus_init(nt);
 	if (rc)
-		goto err4;
+		goto err3;
 
 	nt->link_is_up = false;
 	ntb_link_enable(ndev, NTB_SPEED_AUTO, NTB_WIDTH_AUTO);
@@ -1094,17 +1123,16 @@ static int ntb_transport_probe(struct ntb_client *self, struct ntb_dev *ndev)
 
 	return 0;
 
-err4:
-	ntb_clear_ctx(ndev);
 err3:
-	kfree(nt->qp_vec);
+	ntb_clear_ctx(ndev);
 err2:
-	kfree(nt->mw_vec);
+	kfree(nt->qp_vec);
 err1:
 	while (i--) {
 		mw = &nt->mw_vec[i];
 		iounmap(mw->vbase);
 	}
+	kfree(nt->mw_vec);
 err:
 	kfree(nt);
 	return rc;
@@ -1206,12 +1234,13 @@ static void ntb_async_rx(struct ntb_queue_entry *entry, void *offset)
 {
 	struct dma_async_tx_descriptor *txd;
 	struct ntb_transport_qp *qp = entry->qp;
-	struct dma_chan *chan = qp->dma_chan;
+	struct dma_chan *chan = qp->rx_dma_chan;
 	struct dma_device *device;
 	size_t pay_off, buff_off, len;
 	struct dmaengine_unmap_data *unmap;
 	dma_cookie_t cookie;
 	void *buf = entry->buf;
+	int retries = 0;
 
 	len = entry->len;
 
@@ -1219,18 +1248,18 @@ static void ntb_async_rx(struct ntb_queue_entry *entry, void *offset)
 		goto err;
 
 	if (len < copy_bytes)
-		goto err_wait;
+		goto err;
 
 	device = chan->device;
 	pay_off = (size_t)offset & ~PAGE_MASK;
 	buff_off = (size_t)buf & ~PAGE_MASK;
 
 	if (!is_dma_copy_aligned(device, pay_off, buff_off, len))
-		goto err_wait;
+		goto err;
 
 	unmap = dmaengine_get_unmap_data(device->dev, 2, GFP_NOWAIT);
 	if (!unmap)
-		goto err_wait;
+		goto err;
 
 	unmap->len = len;
 	unmap->addr[0] = dma_map_page(device->dev, virt_to_page(offset),
@@ -1247,11 +1276,21 @@ static void ntb_async_rx(struct ntb_queue_entry *entry, void *offset)
 
 	unmap->from_cnt = 1;
 
-	txd = device->device_prep_dma_memcpy(chan, unmap->addr[1],
-					     unmap->addr[0], len,
-					     DMA_PREP_INTERRUPT);
-	if (!txd)
+	for (retries = 0; retries < DMA_RETRIES; retries++) {
+		txd = device->device_prep_dma_memcpy(chan, unmap->addr[1],
+						     unmap->addr[0], len,
+						     DMA_PREP_INTERRUPT);
+		if (txd)
+			break;
+
+		set_current_state(TASK_INTERRUPTIBLE);
+		schedule_timeout(DMA_OUT_RESOURCE_TO);
+	}
+
+	if (!txd) {
+		qp->dma_rx_prep_err++;
 		goto err_get_unmap;
+	}
 
 	txd->callback = ntb_rx_copy_callback;
 	txd->callback_param = entry;
@@ -1273,12 +1312,6 @@ err_set_unmap:
 	dmaengine_unmap_put(unmap);
 err_get_unmap:
 	dmaengine_unmap_put(unmap);
-err_wait:
-	/* If the callbacks come out of order, the writing of the index to the
-	 * last completed will be out of order.  This may result in the
-	 * receive stalling forever.
-	 */
-	dma_sync_wait(chan, qp->last_cookie);
 err:
 	ntb_memcpy_rx(entry, offset);
 	qp->rx_memcpy++;
@@ -1373,8 +1406,8 @@ static void ntb_transport_rxc_db(unsigned long data)
 			break;
 	}
 
-	if (i && qp->dma_chan)
-		dma_async_issue_pending(qp->dma_chan);
+	if (i && qp->rx_dma_chan)
+		dma_async_issue_pending(qp->rx_dma_chan);
 
 	if (i == qp->rx_max_entry) {
 		/* there is more work to do */
@@ -1441,7 +1474,7 @@ static void ntb_async_tx(struct ntb_transport_qp *qp,
 {
 	struct ntb_payload_header __iomem *hdr;
 	struct dma_async_tx_descriptor *txd;
-	struct dma_chan *chan = qp->dma_chan;
+	struct dma_chan *chan = qp->tx_dma_chan;
 	struct dma_device *device;
 	size_t dest_off, buff_off;
 	struct dmaengine_unmap_data *unmap;
@@ -1450,6 +1483,7 @@ static void ntb_async_tx(struct ntb_transport_qp *qp,
 	void __iomem *offset;
 	size_t len = entry->len;
 	void *buf = entry->buf;
+	int retries = 0;
 
 	offset = qp->tx_mw + qp->tx_max_frame * qp->tx_index;
 	hdr = offset + qp->tx_max_frame - sizeof(struct ntb_payload_header);
@@ -1484,10 +1518,20 @@ static void ntb_async_tx(struct ntb_transport_qp *qp,
 
 	unmap->to_cnt = 1;
 
-	txd = device->device_prep_dma_memcpy(chan, dest, unmap->addr[0], len,
-					     DMA_PREP_INTERRUPT);
-	if (!txd)
+	for (retries = 0; retries < DMA_RETRIES; retries++) {
+		txd = device->device_prep_dma_memcpy(chan, dest, unmap->addr[0],
+						     len, DMA_PREP_INTERRUPT);
+		if (txd)
+			break;
+
+		set_current_state(TASK_INTERRUPTIBLE);
+		schedule_timeout(DMA_OUT_RESOURCE_TO);
+	}
+
+	if (!txd) {
+		qp->dma_tx_prep_err++;
 		goto err_get_unmap;
+	}
 
 	txd->callback = ntb_tx_copy_callback;
 	txd->callback_param = entry;
@@ -1522,7 +1566,7 @@ static int ntb_process_tx(struct ntb_transport_qp *qp,
 
 	if (entry->len > qp->tx_max_frame - sizeof(struct ntb_payload_header)) {
 		if (qp->tx_handler)
-			qp->tx_handler(qp->cb_data, qp, NULL, -EIO);
+			qp->tx_handler(qp, qp->cb_data, NULL, -EIO);
 
 		ntb_list_add(&qp->ntb_tx_free_q_lock, &entry->entry,
 			     &qp->tx_free_q);
@@ -1634,14 +1678,27 @@ ntb_transport_create_queue(void *data, struct device *client_dev,
 	dma_cap_set(DMA_MEMCPY, dma_mask);
 
 	if (use_dma) {
-		qp->dma_chan = dma_request_channel(dma_mask, ntb_dma_filter_fn,
-						   (void *)(unsigned long)node);
-		if (!qp->dma_chan)
-			dev_info(&pdev->dev, "Unable to allocate DMA channel\n");
+		qp->tx_dma_chan =
+			dma_request_channel(dma_mask, ntb_dma_filter_fn,
+					    (void *)(unsigned long)node);
+		if (!qp->tx_dma_chan)
+			dev_info(&pdev->dev, "Unable to allocate TX DMA channel\n");
+
+		qp->rx_dma_chan =
+			dma_request_channel(dma_mask, ntb_dma_filter_fn,
+					    (void *)(unsigned long)node);
+		if (!qp->rx_dma_chan)
+			dev_info(&pdev->dev, "Unable to allocate RX DMA channel\n");
 	} else {
-		qp->dma_chan = NULL;
+		qp->tx_dma_chan = NULL;
+		qp->rx_dma_chan = NULL;
 	}
-	dev_dbg(&pdev->dev, "Using %s memcpy\n", qp->dma_chan ? "DMA" : "CPU");
+
+	dev_dbg(&pdev->dev, "Using %s memcpy for TX\n",
+		qp->tx_dma_chan ? "DMA" : "CPU");
+
+	dev_dbg(&pdev->dev, "Using %s memcpy for RX\n",
+		qp->rx_dma_chan ? "DMA" : "CPU");
 
 	for (i = 0; i < NTB_QP_DEF_NUM_ENTRIES; i++) {
 		entry = kzalloc_node(sizeof(*entry), GFP_ATOMIC, node);
@@ -1676,8 +1733,10 @@ err2:
 err1:
 	while ((entry = ntb_list_rm(&qp->ntb_rx_q_lock, &qp->rx_free_q)))
 		kfree(entry);
-	if (qp->dma_chan)
-		dma_release_channel(qp->dma_chan);
+	if (qp->tx_dma_chan)
+		dma_release_channel(qp->tx_dma_chan);
+	if (qp->rx_dma_chan)
+		dma_release_channel(qp->rx_dma_chan);
 	nt->qp_bitmap_free |= qp_bit;
 err:
 	return NULL;
@@ -1701,12 +1760,27 @@ void ntb_transport_free_queue(struct ntb_transport_qp *qp)
 
 	pdev = qp->ndev->pdev;
 
-	if (qp->dma_chan) {
-		struct dma_chan *chan = qp->dma_chan;
+	if (qp->tx_dma_chan) {
+		struct dma_chan *chan = qp->tx_dma_chan;
 		/* Putting the dma_chan to NULL will force any new traffic to be
 		 * processed by the CPU instead of the DAM engine
 		 */
-		qp->dma_chan = NULL;
+		qp->tx_dma_chan = NULL;
+
+		/* Try to be nice and wait for any queued DMA engine
+		 * transactions to process before smashing it with a rock
+		 */
+		dma_sync_wait(chan, qp->last_cookie);
+		dmaengine_terminate_all(chan);
+		dma_release_channel(chan);
+	}
+
+	if (qp->rx_dma_chan) {
+		struct dma_chan *chan = qp->rx_dma_chan;
+		/* Putting the dma_chan to NULL will force any new traffic to be
+		 * processed by the CPU instead of the DAM engine
+		 */
+		qp->rx_dma_chan = NULL;
 
 		/* Try to be nice and wait for any queued DMA engine
 		 * transactions to process before smashing it with a rock
@@ -1843,7 +1917,7 @@ int ntb_transport_tx_enqueue(struct ntb_transport_qp *qp, void *cb, void *data,
 	entry = ntb_list_rm(&qp->ntb_tx_free_q_lock, &qp->tx_free_q);
 	if (!entry) {
 		qp->tx_err_no_buf++;
-		return -ENOMEM;
+		return -EBUSY;
 	}
 
 	entry->cb_data = cb;
@@ -1888,13 +1962,11 @@ EXPORT_SYMBOL_GPL(ntb_transport_link_up);
  */
 void ntb_transport_link_down(struct ntb_transport_qp *qp)
 {
-	struct pci_dev *pdev;
 	int val;
 
 	if (!qp)
 		return;
 
-	pdev = qp->ndev->pdev;
 	qp->client_ready = false;
 
 	val = ntb_spad_read(qp->ndev, QP_LINKS);
@@ -1953,21 +2025,35 @@ EXPORT_SYMBOL_GPL(ntb_transport_qp_num);
  */
 unsigned int ntb_transport_max_size(struct ntb_transport_qp *qp)
 {
-	unsigned int max;
+	unsigned int max_size;
+	unsigned int copy_align;
+	struct dma_chan *rx_chan, *tx_chan;
 
 	if (!qp)
 		return 0;
 
-	if (!qp->dma_chan)
-		return qp->tx_max_frame - sizeof(struct ntb_payload_header);
+	rx_chan = qp->rx_dma_chan;
+	tx_chan = qp->tx_dma_chan;
+
+	copy_align = max(rx_chan ? rx_chan->device->copy_align : 0,
+			 tx_chan ? tx_chan->device->copy_align : 0);
 
 	/* If DMA engine usage is possible, try to find the max size for that */
-	max = qp->tx_max_frame - sizeof(struct ntb_payload_header);
-	max -= max % (1 << qp->dma_chan->device->copy_align);
+	max_size = qp->tx_max_frame - sizeof(struct ntb_payload_header);
+	max_size = round_down(max_size, 1 << copy_align);
 
-	return max;
+	return max_size;
 }
 EXPORT_SYMBOL_GPL(ntb_transport_max_size);
+
+unsigned int ntb_transport_tx_free_entry(struct ntb_transport_qp *qp)
+{
+	unsigned int head = qp->tx_index;
+	unsigned int tail = qp->remote_rx_info->entry;
+
+	return tail > head ? tail - head : qp->tx_max_entry + tail - head;
+}
+EXPORT_SYMBOL_GPL(ntb_transport_tx_free_entry);
 
 static void ntb_transport_doorbell_callback(void *data, int vector)
 {

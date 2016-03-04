@@ -37,7 +37,7 @@
 #include "be_hw.h"
 #include "be_roce.h"
 
-#define DRV_VER			"10.6.0.2"
+#define DRV_VER			"11.0.0.0"
 #define DRV_NAME		"be2net"
 #define BE_NAME			"Emulex BladeEngine2"
 #define BE3_NAME		"Emulex BladeEngine3"
@@ -105,6 +105,8 @@
 
 #define MAX_VFS			30 /* Max VFs supported by BE3 FW */
 #define FW_VER_LEN		32
+#define	CNTL_SERIAL_NUM_WORDS	8  /* Controller serial number words */
+#define	CNTL_SERIAL_NUM_WORD_SZ	(sizeof(u16)) /* Byte-sz of serial num word */
 
 #define	RSS_INDIR_TABLE_LEN	128
 #define RSS_HASH_KEY_LEN	40
@@ -228,6 +230,7 @@ struct be_mcc_obj {
 struct be_tx_stats {
 	u64 tx_bytes;
 	u64 tx_pkts;
+	u64 tx_vxlan_offload_pkts;
 	u64 tx_reqs;
 	u64 tx_compl;
 	ulong tx_jiffies;
@@ -275,6 +278,7 @@ struct be_rx_page_info {
 struct be_rx_stats {
 	u64 rx_bytes;
 	u64 rx_pkts;
+	u64 rx_vxlan_offload_pkts;
 	u32 rx_drops_no_skbs;	/* skb allocation errors */
 	u32 rx_drops_no_frags;	/* HW has no fetched frags */
 	u32 rx_post_fail;	/* page post alloc failures */
@@ -517,7 +521,7 @@ struct be_adapter {
 	struct be_drv_stats drv_stats;
 	struct be_aic_obj aic_obj[MAX_EVT_QS];
 	u8 vlan_prio_bmap;	/* Available Priority BitMap */
-	u16 recommended_prio;	/* Recommended Priority */
+	u16 recommended_prio_bits;/* Recommended Priority bits in vlan tag */
 	struct be_dma_mem rx_filter; /* Cmd DMA mem for rx-filter */
 
 	struct be_dma_mem stats_cmd;
@@ -543,10 +547,6 @@ struct be_adapter {
 
 	u32 beacon_state;	/* for set_phys_id */
 
-	bool eeh_error;
-	bool fw_timeout;
-	bool hw_error;
-
 	u32 port_num;
 	char port_name;
 	u8 mc_type;
@@ -570,6 +570,8 @@ struct be_adapter {
 	struct be_resources pool_res;	/* resources available for the port */
 	struct be_resources res;	/* resources available for the func */
 	u16 num_vfs;			/* Number of VFs provisioned by PF */
+	u8 pf_num;			/* Numbering used by FW, starts at 0 */
+	u8 vf_num;			/* Numbering used by FW, starts at 1 */
 	u8 virtfn;
 	struct be_vf_cfg *vf_cfg;
 	bool be3_native;
@@ -578,6 +580,7 @@ struct be_adapter {
 	u16 pvid;
 	__be16 vxlan_port;
 	int vxlan_port_count;
+	int vxlan_port_aliases;
 	struct phy_info phy;
 	u8 wol_cap;
 	bool wol_en;
@@ -586,10 +589,11 @@ struct be_adapter {
 	u32 msg_enable;
 	int be_get_temp_freq;
 	struct be_hwmon hwmon_info;
-	u8 pf_number;
 	struct rss_info rss_info;
 	/* Filters for packets that need to be sent to BMC */
 	u32 bmc_filt_mask;
+	u32 fat_dump_len;
+	u16 serial_num[CNTL_SERIAL_NUM_WORDS];
 };
 
 #define be_physfn(adapter)		(!adapter->virtfn)
@@ -841,8 +845,6 @@ void be_roce_dev_remove(struct be_adapter *);
 /*
  * internal function to open-close roce device during ifup-ifdown.
  */
-void be_roce_dev_open(struct be_adapter *);
-void be_roce_dev_close(struct be_adapter *);
 void be_roce_dev_shutdown(struct be_adapter *);
 
 #endif				/* BE_H */

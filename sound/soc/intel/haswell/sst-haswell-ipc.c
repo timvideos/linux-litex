@@ -302,6 +302,10 @@ struct sst_hsw {
 	struct sst_hsw_ipc_dx_reply dx;
 	void *dx_context;
 	dma_addr_t dx_context_paddr;
+	enum sst_hsw_device_id dx_dev;
+	enum sst_hsw_device_mclk dx_mclk;
+	enum sst_hsw_device_mode dx_mode;
+	u32 dx_clock_divider;
 
 	/* boot */
 	wait_queue_head_t boot_wait;
@@ -774,7 +778,6 @@ static irqreturn_t hsw_irq_thread(int irq, void *context)
 	struct sst_hsw *hsw = sst_dsp_get_thread_context(sst);
 	struct sst_generic_ipc *ipc = &hsw->ipc;
 	u32 ipcx, ipcd;
-	int handled;
 	unsigned long flags;
 
 	spin_lock_irqsave(&sst->spinlock, flags);
@@ -786,34 +789,30 @@ static irqreturn_t hsw_irq_thread(int irq, void *context)
 	if (ipcx & SST_IPCX_DONE) {
 
 		/* Handle Immediate reply from DSP Core */
-		handled = hsw_process_reply(hsw, ipcx);
+		hsw_process_reply(hsw, ipcx);
 
-		if (handled > 0) {
-			/* clear DONE bit - tell DSP we have completed */
-			sst_dsp_shim_update_bits_unlocked(sst, SST_IPCX,
-				SST_IPCX_DONE, 0);
+		/* clear DONE bit - tell DSP we have completed */
+		sst_dsp_shim_update_bits_unlocked(sst, SST_IPCX,
+			SST_IPCX_DONE, 0);
 
-			/* unmask Done interrupt */
-			sst_dsp_shim_update_bits_unlocked(sst, SST_IMRX,
-				SST_IMRX_DONE, 0);
-		}
+		/* unmask Done interrupt */
+		sst_dsp_shim_update_bits_unlocked(sst, SST_IMRX,
+			SST_IMRX_DONE, 0);
 	}
 
 	/* new message from DSP */
 	if (ipcd & SST_IPCD_BUSY) {
 
 		/* Handle Notification and Delayed reply from DSP Core */
-		handled = hsw_process_notification(hsw);
+		hsw_process_notification(hsw);
 
 		/* clear BUSY bit and set DONE bit - accept new messages */
-		if (handled > 0) {
-			sst_dsp_shim_update_bits_unlocked(sst, SST_IPCD,
-				SST_IPCD_BUSY | SST_IPCD_DONE, SST_IPCD_DONE);
+		sst_dsp_shim_update_bits_unlocked(sst, SST_IPCD,
+			SST_IPCD_BUSY | SST_IPCD_DONE, SST_IPCD_DONE);
 
-			/* unmask busy interrupt */
-			sst_dsp_shim_update_bits_unlocked(sst, SST_IMRX,
-				SST_IMRX_BUSY, 0);
-		}
+		/* unmask busy interrupt */
+		sst_dsp_shim_update_bits_unlocked(sst, SST_IMRX,
+			SST_IMRX_BUSY, 0);
 	}
 
 	spin_unlock_irqrestore(&sst->spinlock, flags);
@@ -1400,10 +1399,10 @@ int sst_hsw_device_set_config(struct sst_hsw *hsw,
 
 	trace_ipc_request("set device config", dev);
 
-	config.ssp_interface = dev;
-	config.clock_frequency = mclk;
-	config.mode = mode;
-	config.clock_divider = clock_divider;
+	hsw->dx_dev = config.ssp_interface = dev;
+	hsw->dx_mclk = config.clock_frequency = mclk;
+	hsw->dx_mode = config.mode = mode;
+	hsw->dx_clock_divider = config.clock_divider = clock_divider;
 	if (mode == SST_HSW_DEVICE_TDM_CLOCK_MASTER)
 		config.channels = 4;
 	else
@@ -1704,10 +1703,10 @@ int sst_hsw_dsp_runtime_resume(struct sst_hsw *hsw)
 		return -EIO;
 	}
 
-	/* Set ADSP SSP port settings */
-	ret = sst_hsw_device_set_config(hsw, SST_HSW_DEVICE_SSP_0,
-					SST_HSW_DEVICE_MCLK_FREQ_24_MHZ,
-					SST_HSW_DEVICE_CLOCK_MASTER, 9);
+	/* Set ADSP SSP port settings - sadly the FW does not store SSP port
+	   settings as part of the PM context. */
+	ret = sst_hsw_device_set_config(hsw, hsw->dx_dev, hsw->dx_mclk,
+					hsw->dx_mode, hsw->dx_clock_divider);
 	if (ret < 0)
 		dev_err(dev, "error: SSP re-initialization failed\n");
 

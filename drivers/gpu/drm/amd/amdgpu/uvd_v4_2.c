@@ -224,11 +224,11 @@ static int uvd_v4_2_suspend(void *handle)
 	int r;
 	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 
-	r = uvd_v4_2_hw_fini(adev);
+	r = amdgpu_uvd_suspend(adev);
 	if (r)
 		return r;
 
-	r = amdgpu_uvd_suspend(adev);
+	r = uvd_v4_2_hw_fini(adev);
 	if (r)
 		return r;
 
@@ -534,7 +534,7 @@ static void uvd_v4_2_ring_emit_ib(struct amdgpu_ring *ring,
 static int uvd_v4_2_ring_test_ib(struct amdgpu_ring *ring)
 {
 	struct amdgpu_device *adev = ring->adev;
-	struct amdgpu_fence *fence = NULL;
+	struct fence *fence = NULL;
 	int r;
 
 	r = amdgpu_asic_set_uvd_clocks(adev, 53300, 40000);
@@ -555,14 +555,14 @@ static int uvd_v4_2_ring_test_ib(struct amdgpu_ring *ring)
 		goto error;
 	}
 
-	r = amdgpu_fence_wait(fence, false);
+	r = fence_wait(fence, false);
 	if (r) {
 		DRM_ERROR("amdgpu: fence wait failed (%d).\n", r);
 		goto error;
 	}
 	DRM_INFO("ib test on ring %d succeeded\n",  ring->idx);
 error:
-	amdgpu_fence_unref(&fence);
+	fence_put(fence);
 	amdgpu_asic_set_uvd_clocks(adev, 0, 0);
 	return r;
 }
@@ -611,7 +611,7 @@ static void uvd_v4_2_enable_mgcg(struct amdgpu_device *adev,
 {
 	u32 orig, data;
 
-	if (enable && (adev->cg_flags & AMDGPU_CG_SUPPORT_UVD_MGCG)) {
+	if (enable && (adev->cg_flags & AMD_CG_SUPPORT_UVD_MGCG)) {
 		data = RREG32_UVD_CTX(ixUVD_CGC_MEM_CTRL);
 		data = 0xfff;
 		WREG32_UVD_CTX(ixUVD_CGC_MEM_CTRL, data);
@@ -830,6 +830,9 @@ static int uvd_v4_2_set_clockgating_state(void *handle,
 	bool gate = false;
 	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 
+	if (!(adev->cg_flags & AMD_CG_SUPPORT_UVD_MGCG))
+		return 0;
+
 	if (state == AMD_CG_STATE_GATE)
 		gate = true;
 
@@ -848,7 +851,10 @@ static int uvd_v4_2_set_powergating_state(void *handle,
 	 * revisit this when there is a cleaner line between
 	 * the smc and the hw blocks
 	 */
-	 struct amdgpu_device *adev = (struct amdgpu_device *)handle;
+	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
+
+	if (!(adev->pg_flags & AMD_PG_SUPPORT_UVD))
+		return 0;
 
 	if (state == AMD_PG_STATE_GATE) {
 		uvd_v4_2_stop(adev);
@@ -885,7 +891,7 @@ static const struct amdgpu_ring_funcs uvd_v4_2_ring_funcs = {
 	.emit_semaphore = uvd_v4_2_ring_emit_semaphore,
 	.test_ring = uvd_v4_2_ring_test_ring,
 	.test_ib = uvd_v4_2_ring_test_ib,
-	.is_lockup = amdgpu_ring_test_lockup,
+	.insert_nop = amdgpu_ring_insert_nop,
 };
 
 static void uvd_v4_2_set_ring_funcs(struct amdgpu_device *adev)

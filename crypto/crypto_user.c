@@ -25,7 +25,6 @@
 #include <net/netlink.h>
 #include <linux/security.h>
 #include <net/net_namespace.h>
-#include <crypto/internal/aead.h>
 #include <crypto/internal/skcipher.h>
 #include <crypto/internal/rng.h>
 #include <crypto/akcipher.h>
@@ -376,35 +375,7 @@ static struct crypto_alg *crypto_user_skcipher_alg(const char *name, u32 type,
 		err = PTR_ERR(alg);
 		if (err != -EAGAIN)
 			break;
-		if (signal_pending(current)) {
-			err = -EINTR;
-			break;
-		}
-	}
-
-	return ERR_PTR(err);
-}
-
-static struct crypto_alg *crypto_user_aead_alg(const char *name, u32 type,
-					       u32 mask)
-{
-	int err;
-	struct crypto_alg *alg;
-
-	type &= ~(CRYPTO_ALG_TYPE_MASK | CRYPTO_ALG_GENIV);
-	type |= CRYPTO_ALG_TYPE_AEAD;
-	mask &= ~(CRYPTO_ALG_TYPE_MASK | CRYPTO_ALG_GENIV);
-	mask |= CRYPTO_ALG_TYPE_MASK;
-
-	for (;;) {
-		alg = crypto_lookup_aead(name,  type, mask);
-		if (!IS_ERR(alg))
-			return alg;
-
-		err = PTR_ERR(alg);
-		if (err != -EAGAIN)
-			break;
-		if (signal_pending(current)) {
+		if (fatal_signal_pending(current)) {
 			err = -EINTR;
 			break;
 		}
@@ -446,9 +417,6 @@ static int crypto_add_alg(struct sk_buff *skb, struct nlmsghdr *nlh,
 		name = p->cru_name;
 
 	switch (p->cru_type & p->cru_mask & CRYPTO_ALG_TYPE_MASK) {
-	case CRYPTO_ALG_TYPE_AEAD:
-		alg = crypto_user_aead_alg(name, p->cru_type, p->cru_mask);
-		break;
 	case CRYPTO_ALG_TYPE_GIVCIPHER:
 	case CRYPTO_ALG_TYPE_BLKCIPHER:
 	case CRYPTO_ALG_TYPE_ABLKCIPHER:
@@ -531,6 +499,7 @@ static int crypto_user_rcv_msg(struct sk_buff *skb, struct nlmsghdr *nlh)
 		if (link->dump == NULL)
 			return -EINVAL;
 
+		down_read(&crypto_alg_sem);
 		list_for_each_entry(alg, &crypto_alg_list, cra_list)
 			dump_alloc += CRYPTO_REPORT_MAXSIZE;
 
@@ -540,8 +509,11 @@ static int crypto_user_rcv_msg(struct sk_buff *skb, struct nlmsghdr *nlh)
 				.done = link->done,
 				.min_dump_alloc = dump_alloc,
 			};
-			return netlink_dump_start(crypto_nlsk, skb, nlh, &c);
+			err = netlink_dump_start(crypto_nlsk, skb, nlh, &c);
 		}
+		up_read(&crypto_alg_sem);
+
+		return err;
 	}
 
 	err = nlmsg_parse(nlh, crypto_msg_min[type], attrs, CRYPTOCFGA_MAX,

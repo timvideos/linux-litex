@@ -88,7 +88,6 @@ struct pcf857x {
 	struct gpio_chip	chip;
 	struct i2c_client	*client;
 	struct mutex		lock;		/* protect 'out' */
-	spinlock_t		slock;		/* protect irq demux */
 	unsigned		out;		/* software latch */
 	unsigned		status;		/* current status */
 	unsigned int		irq_parent;
@@ -138,7 +137,7 @@ static int i2c_read_le16(struct i2c_client *client)
 
 static int pcf857x_input(struct gpio_chip *chip, unsigned offset)
 {
-	struct pcf857x	*gpio = container_of(chip, struct pcf857x, chip);
+	struct pcf857x	*gpio = gpiochip_get_data(chip);
 	int		status;
 
 	mutex_lock(&gpio->lock);
@@ -151,16 +150,16 @@ static int pcf857x_input(struct gpio_chip *chip, unsigned offset)
 
 static int pcf857x_get(struct gpio_chip *chip, unsigned offset)
 {
-	struct pcf857x	*gpio = container_of(chip, struct pcf857x, chip);
+	struct pcf857x	*gpio = gpiochip_get_data(chip);
 	int		value;
 
 	value = gpio->read(gpio->client);
-	return (value < 0) ? 0 : (value & (1 << offset));
+	return (value < 0) ? value : !!(value & (1 << offset));
 }
 
 static int pcf857x_output(struct gpio_chip *chip, unsigned offset, int value)
 {
-	struct pcf857x	*gpio = container_of(chip, struct pcf857x, chip);
+	struct pcf857x	*gpio = gpiochip_get_data(chip);
 	unsigned	bit = 1 << offset;
 	int		status;
 
@@ -185,23 +184,21 @@ static void pcf857x_set(struct gpio_chip *chip, unsigned offset, int value)
 static irqreturn_t pcf857x_irq(int irq, void *data)
 {
 	struct pcf857x  *gpio = data;
-	unsigned long change, i, status, flags;
+	unsigned long change, i, status;
 
 	status = gpio->read(gpio->client);
-
-	spin_lock_irqsave(&gpio->slock, flags);
 
 	/*
 	 * call the interrupt handler iff gpio is used as
 	 * interrupt source, just to avoid bad irqs
 	 */
-
+	mutex_lock(&gpio->lock);
 	change = (gpio->status ^ status) & gpio->irq_enabled;
+	gpio->status = status;
+	mutex_unlock(&gpio->lock);
+
 	for_each_set_bit(i, &change, gpio->chip.ngpio)
 		handle_nested_irq(irq_find_mapping(gpio->chip.irqdomain, i));
-	gpio->status = status;
-
-	spin_unlock_irqrestore(&gpio->slock, flags);
 
 	return IRQ_HANDLED;
 }
@@ -293,11 +290,10 @@ static int pcf857x_probe(struct i2c_client *client,
 		return -ENOMEM;
 
 	mutex_init(&gpio->lock);
-	spin_lock_init(&gpio->slock);
 
 	gpio->chip.base			= pdata ? pdata->gpio_base : -1;
 	gpio->chip.can_sleep		= true;
-	gpio->chip.dev			= &client->dev;
+	gpio->chip.parent		= &client->dev;
 	gpio->chip.owner		= THIS_MODULE;
 	gpio->chip.get			= pcf857x_get;
 	gpio->chip.set			= pcf857x_set;
@@ -376,7 +372,7 @@ static int pcf857x_probe(struct i2c_client *client,
 	gpio->out = ~n_latch;
 	gpio->status = gpio->out;
 
-	status = gpiochip_add(&gpio->chip);
+	status = gpiochip_add_data(&gpio->chip, gpio);
 	if (status < 0)
 		goto fail;
 
@@ -451,7 +447,6 @@ static int pcf857x_remove(struct i2c_client *client)
 static struct i2c_driver pcf857x_driver = {
 	.driver = {
 		.name	= "pcf857x",
-		.owner	= THIS_MODULE,
 		.of_match_table = of_match_ptr(pcf857x_of_table),
 	},
 	.probe	= pcf857x_probe,

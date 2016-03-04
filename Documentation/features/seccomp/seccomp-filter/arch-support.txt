@@ -32,8 +32,8 @@
     |       score: | TODO |
     |          sh: | TODO |
     |       sparc: | TODO |
-    |        tile: | TODO |
-    |          um: | TODO |
+    |        tile: |  ok  |
+    |          um: |  ok  |
     |   unicore32: | TODO |
     |         x86: |  ok  |
     |      xtensa: | TODO |

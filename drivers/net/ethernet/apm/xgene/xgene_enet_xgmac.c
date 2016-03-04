@@ -184,6 +184,11 @@ static void xgene_xgmac_set_mac_addr(struct xgene_enet_pdata *pdata)
 	xgene_enet_wr_mac(pdata, HSTMACADR_MSW_ADDR, addr1);
 }
 
+static void xgene_xgmac_set_mss(struct xgene_enet_pdata *pdata)
+{
+	xgene_enet_wr_csr(pdata, XG_TSIF_MSS_REG0_ADDR, pdata->mss);
+}
+
 static u32 xgene_enet_link_status(struct xgene_enet_pdata *pdata)
 {
 	u32 data;
@@ -204,8 +209,8 @@ static void xgene_xgmac_init(struct xgene_enet_pdata *pdata)
 	data &= ~HSTLENCHK;
 	xgene_enet_wr_mac(pdata, AXGMAC_CONFIG_1, data);
 
-	xgene_enet_wr_mac(pdata, HSTMAXFRAME_LENGTH_ADDR, 0x06000600);
 	xgene_xgmac_set_mac_addr(pdata);
+	xgene_xgmac_set_mss(pdata);
 
 	xgene_enet_rd_csr(pdata, XG_RSIF_CONFIG_REG_ADDR, &data);
 	data |= CFG_RSIF_FPBUFF_TIMEOUT_EN;
@@ -321,7 +326,7 @@ static void xgene_enet_link_state(struct work_struct *work)
 	schedule_delayed_work(&pdata->link_work, poll_interval);
 }
 
-struct xgene_mac_ops xgene_xgmac_ops = {
+const struct xgene_mac_ops xgene_xgmac_ops = {
 	.init = xgene_xgmac_init,
 	.reset = xgene_xgmac_reset,
 	.rx_enable = xgene_xgmac_rx_enable,
@@ -329,10 +334,11 @@ struct xgene_mac_ops xgene_xgmac_ops = {
 	.rx_disable = xgene_xgmac_rx_disable,
 	.tx_disable = xgene_xgmac_tx_disable,
 	.set_mac_addr = xgene_xgmac_set_mac_addr,
+	.set_mss = xgene_xgmac_set_mss,
 	.link_state = xgene_enet_link_state
 };
 
-struct xgene_port_ops xgene_xgport_ops = {
+const struct xgene_port_ops xgene_xgport_ops = {
 	.reset = xgene_enet_reset,
 	.cle_bypass = xgene_enet_xgcle_bypass,
 	.shutdown = xgene_enet_shutdown,

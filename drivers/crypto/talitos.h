@@ -52,12 +52,7 @@ struct talitos_ptr {
 	__be32 ptr;     /* address */
 };
 
-static const struct talitos_ptr zero_entry = {
-	.len = 0,
-	.j_extent = 0,
-	.eptr = 0,
-	.ptr = 0
-};
+static const struct talitos_ptr zero_entry;
 
 /* descriptor */
 struct talitos_desc {
@@ -154,6 +149,7 @@ struct talitos_private {
 
 	/* hwrng device */
 	struct hwrng rng;
+	bool rng_registered;
 };
 
 extern int talitos_submit(struct device *dev, int ch, struct talitos_desc *desc,
@@ -349,6 +345,7 @@ static inline bool has_ftr_sec1(struct talitos_private *priv)
 /* primary execution unit mode (MODE0) and derivatives */
 #define	DESC_HDR_MODE0_ENCRYPT		cpu_to_be32(0x00100000)
 #define	DESC_HDR_MODE0_AESU_CBC		cpu_to_be32(0x00200000)
+#define	DESC_HDR_MODE0_AESU_CTR		cpu_to_be32(0x00600000)
 #define	DESC_HDR_MODE0_DEU_CBC		cpu_to_be32(0x00400000)
 #define	DESC_HDR_MODE0_DEU_3DES		cpu_to_be32(0x00200000)
 #define	DESC_HDR_MODE0_MDEU_CONT	cpu_to_be32(0x08000000)

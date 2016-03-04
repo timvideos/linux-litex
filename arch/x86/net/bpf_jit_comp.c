@@ -193,7 +193,7 @@ struct jit_context {
 	 32 /* space for rbx, r13, r14, r15 */ + \
 	 8 /* space for skb_copy_bits() buffer */)
 
-#define PROLOGUE_SIZE 51
+#define PROLOGUE_SIZE 48
 
 /* emit x64 prologue code for BPF program and check it's size.
  * bpf_tail_call helper will skip it while jumping into another program
@@ -229,11 +229,15 @@ static void emit_prologue(u8 **pprog)
 	/* mov qword ptr [rbp-X],r15 */
 	EMIT3_off32(0x4C, 0x89, 0xBD, -STACKSIZE + 24);
 
-	/* clear A and X registers */
-	EMIT2(0x31, 0xc0); /* xor eax, eax */
-	EMIT3(0x4D, 0x31, 0xED); /* xor r13, r13 */
+	/* Clear the tail call counter (tail_call_cnt): for eBPF tail calls
+	 * we need to reset the counter to 0. It's done in two instructions,
+	 * resetting rax register to 0 (xor on eax gets 0 extended), and
+	 * moving it to the counter location.
+	 */
 
-	/* clear tail_cnt: mov qword ptr [rbp-X], rax */
+	/* xor eax, eax */
+	EMIT2(0x31, 0xc0);
+	/* mov qword ptr [rbp-X], rax */
 	EMIT3_off32(0x48, 0x89, 0x85, -STACKSIZE + 32);
 
 	BUILD_BUG_ON(cnt != PROLOGUE_SIZE);
@@ -246,7 +250,7 @@ static void emit_prologue(u8 **pprog)
  *     goto out;
  *   if (++tail_call_cnt > MAX_TAIL_CALL_CNT)
  *     goto out;
- *   prog = array->prog[index];
+ *   prog = array->ptrs[index];
  *   if (prog == NULL)
  *     goto out;
  *   goto *(prog->bpf_func + prologue_size);
@@ -284,9 +288,9 @@ static void emit_bpf_tail_call(u8 **pprog)
 	EMIT3(0x83, 0xC0, 0x01);                  /* add eax, 1 */
 	EMIT2_off32(0x89, 0x85, -STACKSIZE + 36); /* mov dword ptr [rbp - 516], eax */
 
-	/* prog = array->prog[index]; */
+	/* prog = array->ptrs[index]; */
 	EMIT4_off32(0x48, 0x8D, 0x84, 0xD6,       /* lea rax, [rsi + rdx * 8 + offsetof(...)] */
-		    offsetof(struct bpf_array, prog));
+		    offsetof(struct bpf_array, ptrs));
 	EMIT3(0x48, 0x8B, 0x00);                  /* mov rax, qword ptr [rax] */
 
 	/* if (prog == NULL)
@@ -315,6 +319,26 @@ static void emit_bpf_tail_call(u8 **pprog)
 	*pprog = prog;
 }
 
+
+static void emit_load_skb_data_hlen(u8 **pprog)
+{
+	u8 *prog = *pprog;
+	int cnt = 0;
+
+	/* r9d = skb->len - skb->data_len (headlen)
+	 * r10 = skb->data
+	 */
+	/* mov %r9d, off32(%rdi) */
+	EMIT3_off32(0x44, 0x8b, 0x8f, offsetof(struct sk_buff, len));
+
+	/* sub %r9d, off32(%rdi) */
+	EMIT3_off32(0x44, 0x2b, 0x8f, offsetof(struct sk_buff, data_len));
+
+	/* mov %r10, off32(%rdi) */
+	EMIT3_off32(0x4c, 0x8b, 0x97, offsetof(struct sk_buff, data));
+	*pprog = prog;
+}
+
 static int do_jit(struct bpf_prog *bpf_prog, int *addrs, u8 *image,
 		  int oldproglen, struct jit_context *ctx)
 {
@@ -329,36 +353,8 @@ static int do_jit(struct bpf_prog *bpf_prog, int *addrs, u8 *image,
 
 	emit_prologue(&prog);
 
-	if (seen_ld_abs) {
-		/* r9d : skb->len - skb->data_len (headlen)
-		 * r10 : skb->data
-		 */
-		if (is_imm8(offsetof(struct sk_buff, len)))
-			/* mov %r9d, off8(%rdi) */
-			EMIT4(0x44, 0x8b, 0x4f,
-			      offsetof(struct sk_buff, len));
-		else
-			/* mov %r9d, off32(%rdi) */
-			EMIT3_off32(0x44, 0x8b, 0x8f,
-				    offsetof(struct sk_buff, len));
-
-		if (is_imm8(offsetof(struct sk_buff, data_len)))
-			/* sub %r9d, off8(%rdi) */
-			EMIT4(0x44, 0x2b, 0x4f,
-			      offsetof(struct sk_buff, data_len));
-		else
-			EMIT3_off32(0x44, 0x2b, 0x8f,
-				    offsetof(struct sk_buff, data_len));
-
-		if (is_imm8(offsetof(struct sk_buff, data)))
-			/* mov %r10, off8(%rdi) */
-			EMIT4(0x4c, 0x8b, 0x57,
-			      offsetof(struct sk_buff, data));
-		else
-			/* mov %r10, off32(%rdi) */
-			EMIT3_off32(0x4c, 0x8b, 0x97,
-				    offsetof(struct sk_buff, data));
-	}
+	if (seen_ld_abs)
+		emit_load_skb_data_hlen(&prog);
 
 	for (i = 0; i < insn_cnt; i++, insn++) {
 		const s32 imm32 = insn->imm;
@@ -367,6 +363,7 @@ static int do_jit(struct bpf_prog *bpf_prog, int *addrs, u8 *image,
 		u8 b1 = 0, b2 = 0, b3 = 0;
 		s64 jmp_offset;
 		u8 jmp_cond;
+		bool reload_skb_data;
 		int ilen;
 		u8 *func;
 
@@ -462,6 +459,18 @@ static int do_jit(struct bpf_prog *bpf_prog, int *addrs, u8 *image,
 			}
 
 		case BPF_ALU | BPF_MOV | BPF_K:
+			/* optimization: if imm32 is zero, use 'xor <dst>,<dst>'
+			 * to save 3 bytes.
+			 */
+			if (imm32 == 0) {
+				if (is_ereg(dst_reg))
+					EMIT1(add_2mod(0x40, dst_reg, dst_reg));
+				b2 = 0x31; /* xor */
+				b3 = 0xC0;
+				EMIT2(b2, add_2reg(b3, dst_reg, dst_reg));
+				break;
+			}
+
 			/* mov %eax, imm32 */
 			if (is_ereg(dst_reg))
 				EMIT1(add_1mod(0x40, dst_reg));
@@ -474,6 +483,20 @@ static int do_jit(struct bpf_prog *bpf_prog, int *addrs, u8 *image,
 				/* verifier must catch invalid insns */
 				pr_err("invalid BPF_LD_IMM64 insn\n");
 				return -EINVAL;
+			}
+
+			/* optimization: if imm64 is zero, use 'xor <dst>,<dst>'
+			 * to save 7 bytes.
+			 */
+			if (insn[0].imm == 0 && insn[1].imm == 0) {
+				b1 = add_2mod(0x48, dst_reg, dst_reg);
+				b2 = 0x31; /* xor */
+				b3 = 0xC0;
+				EMIT3(b1, b2, add_2reg(b3, dst_reg, dst_reg));
+
+				insn++;
+				i++;
+				break;
 			}
 
 			/* movabsq %rax, imm64 */
@@ -818,12 +841,18 @@ xadd:			if (is_imm8(insn->off))
 			func = (u8 *) __bpf_call_base + imm32;
 			jmp_offset = func - (image + addrs[i]);
 			if (seen_ld_abs) {
-				EMIT2(0x41, 0x52); /* push %r10 */
-				EMIT2(0x41, 0x51); /* push %r9 */
-				/* need to adjust jmp offset, since
-				 * pop %r9, pop %r10 take 4 bytes after call insn
-				 */
-				jmp_offset += 4;
+				reload_skb_data = bpf_helper_changes_skb_data(func);
+				if (reload_skb_data) {
+					EMIT1(0x57); /* push %rdi */
+					jmp_offset += 22; /* pop, mov, sub, mov */
+				} else {
+					EMIT2(0x41, 0x52); /* push %r10 */
+					EMIT2(0x41, 0x51); /* push %r9 */
+					/* need to adjust jmp offset, since
+					 * pop %r9, pop %r10 take 4 bytes after call insn
+					 */
+					jmp_offset += 4;
+				}
 			}
 			if (!imm32 || !is_simm32(jmp_offset)) {
 				pr_err("unsupported bpf func %d addr %p image %p\n",
@@ -832,8 +861,13 @@ xadd:			if (is_imm8(insn->off))
 			}
 			EMIT1_off32(0xE8, jmp_offset);
 			if (seen_ld_abs) {
-				EMIT2(0x41, 0x59); /* pop %r9 */
-				EMIT2(0x41, 0x5A); /* pop %r10 */
+				if (reload_skb_data) {
+					EMIT1(0x5F); /* pop %rdi */
+					emit_load_skb_data_hlen(&prog);
+				} else {
+					EMIT2(0x41, 0x59); /* pop %r9 */
+					EMIT2(0x41, 0x5A); /* pop %r10 */
+				}
 			}
 			break;
 
@@ -1099,13 +1133,13 @@ void bpf_int_jit_compile(struct bpf_prog *prog)
 	}
 
 	if (bpf_jit_enable > 1)
-		bpf_jit_dump(prog->len, proglen, 0, image);
+		bpf_jit_dump(prog->len, proglen, pass + 1, image);
 
 	if (image) {
 		bpf_flush_icache(header, image + proglen);
 		set_memory_ro((unsigned long)header, header->pages);
 		prog->bpf_func = (void *)image;
-		prog->jited = true;
+		prog->jited = 1;
 	}
 out:
 	kfree(addrs);

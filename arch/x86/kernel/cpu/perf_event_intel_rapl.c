@@ -63,7 +63,7 @@
 #define INTEL_RAPL_PP1		0x4	/* pseudo-encoding */
 
 #define NR_RAPL_DOMAINS         0x4
-static const char *rapl_domain_names[NR_RAPL_DOMAINS] __initconst = {
+static const char *const rapl_domain_names[NR_RAPL_DOMAINS] __initconst = {
 	"pp0-core",
 	"package",
 	"dram",
@@ -86,6 +86,10 @@ static const char *rapl_domain_names[NR_RAPL_DOMAINS] __initconst = {
 			 1<<RAPL_IDX_RAM_NRG_STAT|\
 			 1<<RAPL_IDX_PP1_NRG_STAT)
 
+/* Knights Landing has PKG, RAM */
+#define RAPL_IDX_KNL	(1<<RAPL_IDX_PKG_NRG_STAT|\
+			 1<<RAPL_IDX_RAM_NRG_STAT)
+
 /*
  * event code: LSB 8 bits, passed in attr->config
  * any other bit is reserved
@@ -103,19 +107,13 @@ static ssize_t __rapl_##_var##_show(struct kobject *kobj,	\
 static struct kobj_attribute format_attr_##_var =		\
 	__ATTR(_name, 0444, __rapl_##_var##_show, NULL)
 
-#define RAPL_EVENT_DESC(_name, _config)				\
-{								\
-	.attr	= __ATTR(_name, 0444, rapl_event_show, NULL),	\
-	.config	= _config,					\
-}
-
 #define RAPL_CNTR_WIDTH 32 /* 32-bit rapl counters */
 
-#define RAPL_EVENT_ATTR_STR(_name, v, str)				\
-static struct perf_pmu_events_attr event_attr_##v = {			\
-	.attr		= __ATTR(_name, 0444, rapl_sysfs_show, NULL),	\
-	.id		= 0,						\
-	.event_str	= str,						\
+#define RAPL_EVENT_ATTR_STR(_name, v, str)					\
+static struct perf_pmu_events_attr event_attr_##v = {				\
+	.attr		= __ATTR(_name, 0444, perf_event_sysfs_show, NULL),	\
+	.id		= 0,							\
+	.event_str	= str,							\
 };
 
 struct rapl_pmu {
@@ -407,19 +405,6 @@ static struct attribute_group rapl_pmu_attr_group = {
 	.attrs = rapl_pmu_attrs,
 };
 
-static ssize_t rapl_sysfs_show(struct device *dev,
-			       struct device_attribute *attr,
-			       char *page)
-{
-	struct perf_pmu_events_attr *pmu_attr = \
-		container_of(attr, struct perf_pmu_events_attr, attr);
-
-	if (pmu_attr->event_str)
-		return sprintf(page, "%s", pmu_attr->event_str);
-
-	return 0;
-}
-
 RAPL_EVENT_ATTR_STR(energy-cores, rapl_cores, "event=0x01");
 RAPL_EVENT_ATTR_STR(energy-pkg  ,   rapl_pkg, "event=0x02");
 RAPL_EVENT_ATTR_STR(energy-ram  ,   rapl_ram, "event=0x03");
@@ -482,6 +467,18 @@ static struct attribute *rapl_events_hsw_attr[] = {
 	EVENT_PTR(rapl_cores_scale),
 	EVENT_PTR(rapl_pkg_scale),
 	EVENT_PTR(rapl_gpu_scale),
+	EVENT_PTR(rapl_ram_scale),
+	NULL,
+};
+
+static struct attribute *rapl_events_knl_attr[] = {
+	EVENT_PTR(rapl_pkg),
+	EVENT_PTR(rapl_ram),
+
+	EVENT_PTR(rapl_pkg_unit),
+	EVENT_PTR(rapl_ram_unit),
+
+	EVENT_PTR(rapl_pkg_scale),
 	EVENT_PTR(rapl_ram_scale),
 	NULL,
 };
@@ -730,6 +727,10 @@ static int __init rapl_pmu_init(void)
 		rapl_cntr_mask = RAPL_IDX_SRV;
 		rapl_pmu_events_group.attrs = rapl_events_srv_attr;
 		break;
+	case 87: /* Knights Landing */
+		rapl_add_quirk(rapl_hsw_server_quirk);
+		rapl_cntr_mask = RAPL_IDX_KNL;
+		rapl_pmu_events_group.attrs = rapl_events_knl_attr;
 
 	default:
 		/* unsupported */

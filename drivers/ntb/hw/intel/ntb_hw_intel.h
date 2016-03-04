@@ -67,6 +67,9 @@
 #define PCI_DEVICE_ID_INTEL_NTB_PS_HSX	0x2F0E
 #define PCI_DEVICE_ID_INTEL_NTB_SS_HSX	0x2F0F
 #define PCI_DEVICE_ID_INTEL_NTB_B2B_BWD	0x0C4E
+#define PCI_DEVICE_ID_INTEL_NTB_B2B_BDX	0x6F0D
+#define PCI_DEVICE_ID_INTEL_NTB_PS_BDX	0x6F0E
+#define PCI_DEVICE_ID_INTEL_NTB_SS_BDX	0x6F0F
 
 /* Intel Xeon hardware */
 
@@ -224,16 +227,11 @@
 
 /* Use the following addresses for translation between b2b ntb devices in case
  * the hardware default values are not reliable. */
-#define XEON_B2B_BAR0_USD_ADDR		0x1000000000000000ull
-#define XEON_B2B_BAR2_USD_ADDR64	0x2000000000000000ull
-#define XEON_B2B_BAR4_USD_ADDR64	0x4000000000000000ull
-#define XEON_B2B_BAR4_USD_ADDR32	0x20000000u
-#define XEON_B2B_BAR5_USD_ADDR32	0x40000000u
-#define XEON_B2B_BAR0_DSD_ADDR		0x9000000000000000ull
-#define XEON_B2B_BAR2_DSD_ADDR64	0xa000000000000000ull
-#define XEON_B2B_BAR4_DSD_ADDR64	0xc000000000000000ull
-#define XEON_B2B_BAR4_DSD_ADDR32	0xa0000000u
-#define XEON_B2B_BAR5_DSD_ADDR32	0xc0000000u
+#define XEON_B2B_BAR0_ADDR	0x1000000000000000ull
+#define XEON_B2B_BAR2_ADDR64	0x2000000000000000ull
+#define XEON_B2B_BAR4_ADDR64	0x4000000000000000ull
+#define XEON_B2B_BAR4_ADDR32	0x20000000u
+#define XEON_B2B_BAR5_ADDR32	0x40000000u
 
 /* The peer ntb secondary config space is 32KB fixed size */
 #define XEON_B2B_MIN_SIZE		0x8000
@@ -246,6 +244,9 @@
 /* flags to indicate unsafe api */
 #define NTB_UNSAFE_DB			BIT_ULL(0)
 #define NTB_UNSAFE_SPAD			BIT_ULL(1)
+
+#define NTB_BAR_MASK_64			~(0xfull)
+#define NTB_BAR_MASK_32			~(0xfu)
 
 struct intel_ntb_dev;
 
@@ -336,7 +337,8 @@ struct intel_ntb_dev {
 #define ndev_pdev(ndev) ((ndev)->ntb.pdev)
 #define ndev_name(ndev) pci_name(ndev_pdev(ndev))
 #define ndev_dev(ndev) (&ndev_pdev(ndev)->dev)
-#define ntb_ndev(ntb) container_of(ntb, struct intel_ntb_dev, ntb)
-#define hb_ndev(work) container_of(work, struct intel_ntb_dev, hb_timer.work)
+#define ntb_ndev(__ntb) container_of(__ntb, struct intel_ntb_dev, ntb)
+#define hb_ndev(__work) container_of(__work, struct intel_ntb_dev, \
+				     hb_timer.work)
 
 #endif

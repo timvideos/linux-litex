@@ -87,6 +87,9 @@ void	target_free_device(struct se_device *);
 /* target_core_configfs.c */
 void	target_setup_backend_cits(struct target_backend *);
 
+/* target_core_fabric_configfs.c */
+int	target_fabric_setup_cits(struct target_fabric_configfs *);
+
 /* target_core_fabric_lib.c */
 int	target_get_pr_transport_id_len(struct se_node_acl *nacl,
 		struct t10_pr_registration *pr_reg, int *format_code);
@@ -138,7 +141,6 @@ void	transport_dump_vpd_proto_id(struct t10_vpd *, unsigned char *, int);
 int	transport_dump_vpd_assoc(struct t10_vpd *, unsigned char *, int);
 int	transport_dump_vpd_ident_type(struct t10_vpd *, unsigned char *, int);
 int	transport_dump_vpd_ident(struct t10_vpd *, unsigned char *, int);
-bool	target_stop_cmd(struct se_cmd *cmd, unsigned long *flags);
 void	transport_clear_lun_ref(struct se_lun *);
 void	transport_send_task_abort(struct se_cmd *);
 sense_reason_t	target_cmd_size_check(struct se_cmd *cmd, unsigned int size);

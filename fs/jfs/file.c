@@ -38,17 +38,17 @@ int jfs_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	if (rc)
 		return rc;
 
-	mutex_lock(&inode->i_mutex);
+	inode_lock(inode);
 	if (!(inode->i_state & I_DIRTY_ALL) ||
 	    (datasync && !(inode->i_state & I_DIRTY_DATASYNC))) {
 		/* Make sure committed changes hit the disk */
 		jfs_flush_journal(JFS_SBI(inode->i_sb)->log, 1);
-		mutex_unlock(&inode->i_mutex);
+		inode_unlock(inode);
 		return rc;
 	}
 
 	rc |= jfs_commit_inode(inode, 1);
-	mutex_unlock(&inode->i_mutex);
+	inode_unlock(inode);
 
 	return rc ? -EIO : 0;
 }
@@ -107,8 +107,11 @@ int jfs_setattr(struct dentry *dentry, struct iattr *iattr)
 	if (rc)
 		return rc;
 
-	if (is_quota_modification(inode, iattr))
-		dquot_initialize(inode);
+	if (is_quota_modification(inode, iattr)) {
+		rc = dquot_initialize(inode);
+		if (rc)
+			return rc;
+	}
 	if ((iattr->ia_valid & ATTR_UID && !uid_eq(iattr->ia_uid, inode->i_uid)) ||
 	    (iattr->ia_valid & ATTR_GID && !gid_eq(iattr->ia_gid, inode->i_gid))) {
 		rc = dquot_transfer(inode, iattr);

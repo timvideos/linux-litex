@@ -128,7 +128,8 @@ static char *phonetic[] = {
 
 /* array of 256 char pointers (one for each character description)
  * initialized to default_chars and user selectable via
- * /proc/speakup/characters */
+ * /proc/speakup/characters
+ */
 char *spk_characters[256];
 
 char *spk_default_chars[256] = {
@@ -194,7 +195,8 @@ char *spk_default_chars[256] = {
 
 /* array of 256 u_short (one for each character)
  * initialized to default_chartab and user selectable via
- * /sys/module/speakup/parameters/chartab */
+ * /sys/module/speakup/parameters/chartab
+ */
 u_short spk_chartab[256];
 
 static u_short default_chartab[256] = {
@@ -262,8 +264,9 @@ static struct notifier_block vt_notifier_block = {
 	.notifier_call = vt_notifier_call,
 };
 
-static unsigned char get_attributes(u16 *pos)
+static unsigned char get_attributes(struct vc_data *vc, u16 *pos)
 {
+	pos = screen_pos(vc, pos - (u16 *)vc->vc_origin, 1);
 	return (u_char) (scr_readw(pos) >> 8);
 }
 
@@ -273,7 +276,7 @@ static void speakup_date(struct vc_data *vc)
 	spk_y = spk_cy = vc->vc_y;
 	spk_pos = spk_cp = vc->vc_pos;
 	spk_old_attr = spk_attr;
-	spk_attr = get_attributes((u_short *) spk_pos);
+	spk_attr = get_attributes(vc, (u_short *)spk_pos);
 }
 
 static void bleep(u_short val)
@@ -467,8 +470,12 @@ static u16 get_char(struct vc_data *vc, u16 *pos, u_char *attribs)
 	u16 ch = ' ';
 
 	if (vc && pos) {
-		u16 w = scr_readw(pos);
-		u16 c = w & 0xff;
+		u16 w;
+		u16 c;
+
+		pos = screen_pos(vc, pos - (u16 *)vc->vc_origin, 1);
+		w = scr_readw(pos);
+		c = w & 0xff;
 
 		if (w & vc->vc_hi_font_mask)
 			c |= 0x100;
@@ -540,7 +547,8 @@ static void say_next_char(struct vc_data *vc)
  * see if there is a word starting on the next position to the right
  * and return that word if it exists.  If it does not exist it will
  * move left to the beginning of any previous word on the line or the
- * beginning off the line whichever comes first.. */
+ * beginning off the line whichever comes first..
+ */
 
 static u_long get_word(struct vc_data *vc)
 {
@@ -743,7 +751,7 @@ static int get_line(struct vc_data *vc)
 	u_char tmp2;
 
 	spk_old_attr = spk_attr;
-	spk_attr = get_attributes((u_short *) spk_pos);
+	spk_attr = get_attributes(vc, (u_short *)spk_pos);
 	for (i = 0; i < vc->vc_cols; i++) {
 		buf[i] = (u_char) get_char(vc, (u_short *) tmp, &tmp2);
 		tmp += 2;
@@ -808,7 +816,7 @@ static int say_from_to(struct vc_data *vc, u_long from, u_long to,
 	u_short saved_punc_mask = spk_punc_mask;
 
 	spk_old_attr = spk_attr;
-	spk_attr = get_attributes((u_short *) from);
+	spk_attr = get_attributes(vc, (u_short *)from);
 	while (from < to) {
 		buf[i++] = (char)get_char(vc, (u_short *) from, &tmp);
 		from += 2;
@@ -883,7 +891,7 @@ static int get_sentence_buf(struct vc_data *vc, int read_punc)
 	sentmarks[bn][0] = &sentbuf[bn][0];
 	i = 0;
 	spk_old_attr = spk_attr;
-	spk_attr = get_attributes((u_short *) start);
+	spk_attr = get_attributes(vc, (u_short *)start);
 
 	while (start < end) {
 		sentbuf[bn][i] = (char)get_char(vc, (u_short *) start, &tmp);
@@ -1113,7 +1121,8 @@ static void spkup_write(const char *in_buf, int count)
 			 * suppress multiple to get rid of long pauses and
 			 * clear repeat count
 			 * so if someone has
-			 * repeats on you don't get nothing repeated count */
+			 * repeats on you don't get nothing repeated count
+			 */
 			if (ch != old_ch)
 				synth_printf("%c", ch);
 			else
@@ -1509,7 +1518,8 @@ static void do_handle_cursor(struct vc_data *vc, u_char value, char up_flag)
 	if (spk_no_intr)
 		spk_do_flush();
 /* the key press flushes if !no_inter but we want to flush on cursor
- * moves regardless of no_inter state */
+ * moves regardless of no_inter state
+ */
 	is_cursor = value + 1;
 	old_cursor_pos = vc->vc_pos;
 	old_cursor_x = vc->vc_x;
@@ -1580,7 +1590,7 @@ static int count_highlight_color(struct vc_data *vc)
 		u16 *ptr;
 
 		for (ptr = start; ptr < end; ptr++) {
-			ch = get_attributes(ptr);
+			ch = get_attributes(vc, ptr);
 			bg = (ch & 0x70) >> 4;
 			speakup_console[vc_num]->ht.bgcount[bg]++;
 		}

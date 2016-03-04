@@ -56,18 +56,13 @@ int __init security_init(void)
 	pr_info("Security Framework initialized\n");
 
 	/*
-	 * Always load the capability module.
+	 * Load minor LSMs, with the capability module always first.
 	 */
 	capability_add_hooks();
-#ifdef CONFIG_SECURITY_YAMA_STACKED
-	/*
-	 * If Yama is configured for stacking load it next.
-	 */
 	yama_add_hooks();
-#endif
+
 	/*
-	 * Load the chosen module if there is one.
-	 * This will also find yama if it is stacking
+	 * Load all the remaining security modules.
 	 */
 	do_security_initcalls();
 
@@ -702,7 +697,7 @@ int security_inode_killpriv(struct dentry *dentry)
 	return call_int_hook(inode_killpriv, 0, dentry);
 }
 
-int security_inode_getsecurity(const struct inode *inode, const char *name, void **buffer, bool alloc)
+int security_inode_getsecurity(struct inode *inode, const char *name, void **buffer, bool alloc)
 {
 	if (unlikely(IS_PRIVATE(inode)))
 		return -EOPNOTSUPP;
@@ -726,7 +721,7 @@ int security_inode_listsecurity(struct inode *inode, char *buffer, size_t buffer
 }
 EXPORT_SYMBOL(security_inode_listsecurity);
 
-void security_inode_getsecid(const struct inode *inode, u32 *secid)
+void security_inode_getsecid(struct inode *inode, u32 *secid)
 {
 	call_void_hook(inode_getsecid, inode, secid);
 }
@@ -776,7 +771,7 @@ static inline unsigned long mmap_prot(struct file *file, unsigned long prot)
 	 * ditto if it's not on noexec mount, except that on !MMU we need
 	 * NOMMU_MAP_EXEC (== VM_MAYEXEC) in this case
 	 */
-	if (!(file->f_path.mnt->mnt_flags & MNT_NOEXEC)) {
+	if (!path_noexec(&file->f_path)) {
 #ifndef CONFIG_MMU
 		if (file->f_op->mmap_capabilities) {
 			unsigned caps = file->f_op->mmap_capabilities(file);
@@ -1165,6 +1160,12 @@ void security_release_secctx(char *secdata, u32 seclen)
 	call_void_hook(release_secctx, secdata, seclen);
 }
 EXPORT_SYMBOL(security_release_secctx);
+
+void security_inode_invalidate_secctx(struct inode *inode)
+{
+	call_void_hook(inode_invalidate_secctx, inode);
+}
+EXPORT_SYMBOL(security_inode_invalidate_secctx);
 
 int security_inode_notifysecctx(struct inode *inode, void *ctx, u32 ctxlen)
 {
@@ -1768,6 +1769,8 @@ struct security_hook_heads security_hook_heads = {
 		LIST_HEAD_INIT(security_hook_heads.secctx_to_secid),
 	.release_secctx =
 		LIST_HEAD_INIT(security_hook_heads.release_secctx),
+	.inode_invalidate_secctx =
+		LIST_HEAD_INIT(security_hook_heads.inode_invalidate_secctx),
 	.inode_notifysecctx =
 		LIST_HEAD_INIT(security_hook_heads.inode_notifysecctx),
 	.inode_setsecctx =

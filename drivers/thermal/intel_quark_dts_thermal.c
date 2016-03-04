@@ -125,8 +125,8 @@ static int soc_dts_enable(struct thermal_zone_device *tzd)
 	struct soc_sensor_entry *aux_entry = tzd->devdata;
 	int ret;
 
-	ret = iosf_mbi_read(QRK_MBI_UNIT_RMU, QRK_MBI_RMU_READ,
-					QRK_DTS_REG_OFFSET_ENABLE, &out);
+	ret = iosf_mbi_read(QRK_MBI_UNIT_RMU, MBI_REG_READ,
+			    QRK_DTS_REG_OFFSET_ENABLE, &out);
 	if (ret)
 		return ret;
 
@@ -137,8 +137,8 @@ static int soc_dts_enable(struct thermal_zone_device *tzd)
 
 	if (!aux_entry->locked) {
 		out |= QRK_DTS_ENABLE_BIT;
-		ret = iosf_mbi_write(QRK_MBI_UNIT_RMU, QRK_MBI_RMU_WRITE,
-					QRK_DTS_REG_OFFSET_ENABLE, out);
+		ret = iosf_mbi_write(QRK_MBI_UNIT_RMU, MBI_REG_WRITE,
+				     QRK_DTS_REG_OFFSET_ENABLE, out);
 		if (ret)
 			return ret;
 
@@ -158,8 +158,8 @@ static int soc_dts_disable(struct thermal_zone_device *tzd)
 	struct soc_sensor_entry *aux_entry = tzd->devdata;
 	int ret;
 
-	ret = iosf_mbi_read(QRK_MBI_UNIT_RMU, QRK_MBI_RMU_READ,
-					QRK_DTS_REG_OFFSET_ENABLE, &out);
+	ret = iosf_mbi_read(QRK_MBI_UNIT_RMU, MBI_REG_READ,
+			    QRK_DTS_REG_OFFSET_ENABLE, &out);
 	if (ret)
 		return ret;
 
@@ -170,8 +170,8 @@ static int soc_dts_disable(struct thermal_zone_device *tzd)
 
 	if (!aux_entry->locked) {
 		out &= ~QRK_DTS_ENABLE_BIT;
-		ret = iosf_mbi_write(QRK_MBI_UNIT_RMU, QRK_MBI_RMU_WRITE,
-					QRK_DTS_REG_OFFSET_ENABLE, out);
+		ret = iosf_mbi_write(QRK_MBI_UNIT_RMU, MBI_REG_WRITE,
+				     QRK_DTS_REG_OFFSET_ENABLE, out);
 
 		if (ret)
 			return ret;
@@ -186,14 +186,14 @@ static int soc_dts_disable(struct thermal_zone_device *tzd)
 	return ret;
 }
 
-static int _get_trip_temp(int trip, unsigned long *temp)
+static int _get_trip_temp(int trip, int *temp)
 {
 	int status;
 	u32 out;
 
 	mutex_lock(&dts_update_mutex);
-	status = iosf_mbi_read(QRK_MBI_UNIT_RMU, QRK_MBI_RMU_READ,
-				QRK_DTS_REG_OFFSET_PTPS, &out);
+	status = iosf_mbi_read(QRK_MBI_UNIT_RMU, MBI_REG_READ,
+			       QRK_DTS_REG_OFFSET_PTPS, &out);
 	mutex_unlock(&dts_update_mutex);
 
 	if (status)
@@ -212,19 +212,18 @@ static int _get_trip_temp(int trip, unsigned long *temp)
 }
 
 static inline int sys_get_trip_temp(struct thermal_zone_device *tzd,
-				int trip, unsigned long *temp)
+				int trip, int *temp)
 {
 	return _get_trip_temp(trip, temp);
 }
 
-static inline int sys_get_crit_temp(struct thermal_zone_device *tzd,
-				unsigned long *temp)
+static inline int sys_get_crit_temp(struct thermal_zone_device *tzd, int *temp)
 {
 	return _get_trip_temp(QRK_DTS_ID_TP_CRITICAL, temp);
 }
 
 static int update_trip_temp(struct soc_sensor_entry *aux_entry,
-				int trip, unsigned long temp)
+				int trip, int temp)
 {
 	u32 out;
 	u32 temp_out;
@@ -237,8 +236,8 @@ static int update_trip_temp(struct soc_sensor_entry *aux_entry,
 		goto failed;
 	}
 
-	ret = iosf_mbi_read(QRK_MBI_UNIT_RMU, QRK_MBI_RMU_READ,
-				QRK_DTS_REG_OFFSET_PTPS, &store_ptps);
+	ret = iosf_mbi_read(QRK_MBI_UNIT_RMU, MBI_REG_READ,
+			    QRK_DTS_REG_OFFSET_PTPS, &store_ptps);
 	if (ret)
 		goto failed;
 
@@ -263,8 +262,8 @@ static int update_trip_temp(struct soc_sensor_entry *aux_entry,
 	out |= (temp_out & QRK_DTS_MASK_TP_THRES) <<
 		(trip * QRK_DTS_SHIFT_TP);
 
-	ret = iosf_mbi_write(QRK_MBI_UNIT_RMU, QRK_MBI_RMU_WRITE,
-				QRK_DTS_REG_OFFSET_PTPS, out);
+	ret = iosf_mbi_write(QRK_MBI_UNIT_RMU, MBI_REG_WRITE,
+			     QRK_DTS_REG_OFFSET_PTPS, out);
 
 failed:
 	mutex_unlock(&dts_update_mutex);
@@ -272,7 +271,7 @@ failed:
 }
 
 static inline int sys_set_trip_temp(struct thermal_zone_device *tzd, int trip,
-				unsigned long temp)
+				int temp)
 {
 	return update_trip_temp(tzd->devdata, trip, temp);
 }
@@ -289,14 +288,14 @@ static int sys_get_trip_type(struct thermal_zone_device *thermal,
 }
 
 static int sys_get_curr_temp(struct thermal_zone_device *tzd,
-				unsigned long *temp)
+				int *temp)
 {
 	u32 out;
 	int ret;
 
 	mutex_lock(&dts_update_mutex);
-	ret = iosf_mbi_read(QRK_MBI_UNIT_RMU, QRK_MBI_RMU_READ,
-					QRK_DTS_REG_OFFSET_TEMP, &out);
+	ret = iosf_mbi_read(QRK_MBI_UNIT_RMU, MBI_REG_READ,
+			    QRK_DTS_REG_OFFSET_TEMP, &out);
 	mutex_unlock(&dts_update_mutex);
 
 	if (ret)
@@ -351,13 +350,13 @@ static void free_soc_dts(struct soc_sensor_entry *aux_entry)
 	if (aux_entry) {
 		if (!aux_entry->locked) {
 			mutex_lock(&dts_update_mutex);
-			iosf_mbi_write(QRK_MBI_UNIT_RMU, QRK_MBI_RMU_WRITE,
-					QRK_DTS_REG_OFFSET_ENABLE,
-					aux_entry->store_dts_enable);
+			iosf_mbi_write(QRK_MBI_UNIT_RMU, MBI_REG_WRITE,
+				       QRK_DTS_REG_OFFSET_ENABLE,
+				       aux_entry->store_dts_enable);
 
-			iosf_mbi_write(QRK_MBI_UNIT_RMU, QRK_MBI_RMU_WRITE,
-					QRK_DTS_REG_OFFSET_PTPS,
-					aux_entry->store_ptps);
+			iosf_mbi_write(QRK_MBI_UNIT_RMU, MBI_REG_WRITE,
+				       QRK_DTS_REG_OFFSET_PTPS,
+				       aux_entry->store_ptps);
 			mutex_unlock(&dts_update_mutex);
 		}
 		thermal_zone_device_unregister(aux_entry->tzone);
@@ -379,9 +378,8 @@ static struct soc_sensor_entry *alloc_soc_dts(void)
 	}
 
 	/* Check if DTS register is locked */
-	err = iosf_mbi_read(QRK_MBI_UNIT_RMU, QRK_MBI_RMU_READ,
-					QRK_DTS_REG_OFFSET_LOCK,
-					&out);
+	err = iosf_mbi_read(QRK_MBI_UNIT_RMU, MBI_REG_READ,
+			    QRK_DTS_REG_OFFSET_LOCK, &out);
 	if (err)
 		goto err_ret;
 
@@ -396,16 +394,16 @@ static struct soc_sensor_entry *alloc_soc_dts(void)
 	/* Store DTS default state if DTS registers are not locked */
 	if (!aux_entry->locked) {
 		/* Store DTS default enable for restore on exit */
-		err = iosf_mbi_read(QRK_MBI_UNIT_RMU, QRK_MBI_RMU_READ,
-					QRK_DTS_REG_OFFSET_ENABLE,
-					&aux_entry->store_dts_enable);
+		err = iosf_mbi_read(QRK_MBI_UNIT_RMU, MBI_REG_READ,
+				    QRK_DTS_REG_OFFSET_ENABLE,
+				    &aux_entry->store_dts_enable);
 		if (err)
 			goto err_ret;
 
 		/* Store DTS default PTPS register for restore on exit */
-		err = iosf_mbi_read(QRK_MBI_UNIT_RMU, QRK_MBI_RMU_READ,
-					QRK_DTS_REG_OFFSET_PTPS,
-					&aux_entry->store_ptps);
+		err = iosf_mbi_read(QRK_MBI_UNIT_RMU, MBI_REG_READ,
+				    QRK_DTS_REG_OFFSET_PTPS,
+				    &aux_entry->store_ptps);
 		if (err)
 			goto err_ret;
 	}

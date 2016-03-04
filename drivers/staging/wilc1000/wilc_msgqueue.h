@@ -10,23 +10,22 @@
  *  @version	1.0
  */
 
-#include "wilc_platform.h"
-#include "wilc_errorsupport.h"
-#include "wilc_memory.h"
-#include "wilc_strutils.h"
+#include <linux/semaphore.h>
 
-/*!
- *  @struct             tstrWILC_MsgQueueAttrs
- *  @brief		Message Queue API options
- *  @author		syounan
- *  @date		30 Aug 2010
- *  @version		1.0
- */
-typedef struct {
-	/* a dummy member to avoid compiler errors*/
-	u8 dummy;
+/* Message Queue type is a structure */
+typedef struct __Message_struct {
+	void *pvBuffer;
+	u32 u32Length;
+	struct __Message_struct *pstrNext;
+} Message;
 
-} tstrWILC_MsgQueueAttrs;
+typedef struct __MessageQueue_struct {
+	struct semaphore hSem;
+	spinlock_t strCriticalSection;
+	bool bExiting;
+	u32 u32ReceiversCount;
+	Message *pstrMessageList;
+} WILC_MsgQueueHandle;
 
 /*!
  *  @brief		Creates a new Message queue
@@ -36,19 +35,16 @@ typedef struct {
  *                              any other message queue having the same name in the system
  *  @param[in,out]	pHandle handle to the message queue object
  *  @param[in]	pstrAttrs Optional attributes, NULL for default
- *  @return		Error code indicating sucess/failure
- *  @sa			tstrWILC_MsgQueueAttrs
+ *  @return		Error code indicating success/failure
  *  @author		syounan
  *  @date		30 Aug 2010
  *  @version		1.0
  */
-WILC_ErrNo WILC_MsgQueueCreate(WILC_MsgQueueHandle *pHandle,
-			       tstrWILC_MsgQueueAttrs *pstrAttrs);
-
+int wilc_mq_create(WILC_MsgQueueHandle *pHandle);
 
 /*!
  *  @brief		Sends a message
- *  @details		Sends a message, this API will block unil the message is
+ *  @details		Sends a message, this API will block until the message is
  *                              actually sent or until it is timedout (as long as the feature
  *                              CONFIG_WILC_MSG_QUEUE_TIMEOUT is enabled and pstrAttrs->u32Timeout
  *                              is not set to WILC_OS_INFINITY), zero timeout is a valid value
@@ -56,20 +52,17 @@ WILC_ErrNo WILC_MsgQueueCreate(WILC_MsgQueueHandle *pHandle,
  *  @param[in]	pvSendBuffer pointer to the data to send
  *  @param[in]	u32SendBufferSize the size of the data to send
  *  @param[in]	pstrAttrs Optional attributes, NULL for default
- *  @return		Error code indicating sucess/failure
- *  @sa			tstrWILC_MsgQueueAttrs
+ *  @return		Error code indicating success/failure
  *  @author		syounan
  *  @date		30 Aug 2010
  *  @version		1.0
  */
-WILC_ErrNo WILC_MsgQueueSend(WILC_MsgQueueHandle *pHandle,
-			     const void *pvSendBuffer, u32 u32SendBufferSize,
-			     tstrWILC_MsgQueueAttrs *pstrAttrs);
-
+int wilc_mq_send(WILC_MsgQueueHandle *pHandle,
+			     const void *pvSendBuffer, u32 u32SendBufferSize);
 
 /*!
  *  @brief		Receives a message
- *  @details		Receives a message, this API will block unil a message is
+ *  @details		Receives a message, this API will block until a message is
  *                              received or until it is timedout (as long as the feature
  *                              CONFIG_WILC_MSG_QUEUE_TIMEOUT is enabled and pstrAttrs->u32Timeout
  *                              is not set to WILC_OS_INFINITY), zero timeout is a valid value
@@ -78,31 +71,24 @@ WILC_ErrNo WILC_MsgQueueSend(WILC_MsgQueueHandle *pHandle,
  *  @param[in]	u32RecvBufferSize the size of the receive buffer
  *  @param[out]	pu32ReceivedLength the length of received data
  *  @param[in]	pstrAttrs Optional attributes, NULL for default
- *  @return		Error code indicating sucess/failure
- *  @sa			tstrWILC_MsgQueueAttrs
+ *  @return		Error code indicating success/failure
  *  @author		syounan
  *  @date		30 Aug 2010
  *  @version		1.0
  */
-WILC_ErrNo WILC_MsgQueueRecv(WILC_MsgQueueHandle *pHandle,
+int wilc_mq_recv(WILC_MsgQueueHandle *pHandle,
 			     void *pvRecvBuffer, u32 u32RecvBufferSize,
-			     u32 *pu32ReceivedLength,
-			     tstrWILC_MsgQueueAttrs *pstrAttrs);
-
+			     u32 *pu32ReceivedLength);
 
 /*!
  *  @brief		Destroys an existing  Message queue
  *  @param[in]	pHandle handle to the message queue object
  *  @param[in]	pstrAttrs Optional attributes, NULL for default
- *  @return		Error code indicating sucess/failure
- *  @sa			tstrWILC_MsgQueueAttrs
+ *  @return		Error code indicating success/failure
  *  @author		syounan
  *  @date		30 Aug 2010
  *  @version		1.0
  */
-WILC_ErrNo WILC_MsgQueueDestroy(WILC_MsgQueueHandle *pHandle,
-				tstrWILC_MsgQueueAttrs *pstrAttrs);
-
-
+int wilc_mq_destroy(WILC_MsgQueueHandle *pHandle);
 
 #endif

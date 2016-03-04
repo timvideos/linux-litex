@@ -17,7 +17,6 @@
 #include <linux/interrupt.h>
 #include <linux/irqchip.h>
 #include <linux/of_irq.h>
-#include "../../../drivers/irqchip/irqchip.h"
 
 #include <asm/irq_cpu.h>
 #include <asm/mipsregs.h>
@@ -27,9 +26,13 @@
 #include "common.h"
 #include "machtypes.h"
 
-static void ath79_misc_irq_handler(unsigned int irq, struct irq_desc *desc)
+static void __init ath79_misc_intc_domain_init(
+	struct device_node *node, int irq);
+
+static void ath79_misc_irq_handler(struct irq_desc *desc)
 {
-	void __iomem *base = ath79_reset_base;
+	struct irq_domain *domain = irq_desc_get_handler_data(desc);
+	void __iomem *base = domain->host_data;
 	u32 pending;
 
 	pending = __raw_readl(base + AR71XX_RESET_REG_MISC_INT_STATUS) &
@@ -43,15 +46,15 @@ static void ath79_misc_irq_handler(unsigned int irq, struct irq_desc *desc)
 	while (pending) {
 		int bit = __ffs(pending);
 
-		generic_handle_irq(ATH79_MISC_IRQ(bit));
+		generic_handle_irq(irq_linear_revmap(domain, bit));
 		pending &= ~BIT(bit);
 	}
 }
 
 static void ar71xx_misc_irq_unmask(struct irq_data *d)
 {
-	unsigned int irq = d->irq - ATH79_MISC_IRQ_BASE;
-	void __iomem *base = ath79_reset_base;
+	void __iomem *base = irq_data_get_irq_chip_data(d);
+	unsigned int irq = d->hwirq;
 	u32 t;
 
 	t = __raw_readl(base + AR71XX_RESET_REG_MISC_INT_ENABLE);
@@ -63,8 +66,8 @@ static void ar71xx_misc_irq_unmask(struct irq_data *d)
 
 static void ar71xx_misc_irq_mask(struct irq_data *d)
 {
-	unsigned int irq = d->irq - ATH79_MISC_IRQ_BASE;
-	void __iomem *base = ath79_reset_base;
+	void __iomem *base = irq_data_get_irq_chip_data(d);
+	unsigned int irq = d->hwirq;
 	u32 t;
 
 	t = __raw_readl(base + AR71XX_RESET_REG_MISC_INT_ENABLE);
@@ -76,8 +79,8 @@ static void ar71xx_misc_irq_mask(struct irq_data *d)
 
 static void ar724x_misc_irq_ack(struct irq_data *d)
 {
-	unsigned int irq = d->irq - ATH79_MISC_IRQ_BASE;
-	void __iomem *base = ath79_reset_base;
+	void __iomem *base = irq_data_get_irq_chip_data(d);
+	unsigned int irq = d->hwirq;
 	u32 t;
 
 	t = __raw_readl(base + AR71XX_RESET_REG_MISC_INT_STATUS);
@@ -95,12 +98,6 @@ static struct irq_chip ath79_misc_irq_chip = {
 
 static void __init ath79_misc_irq_init(void)
 {
-	void __iomem *base = ath79_reset_base;
-	int i;
-
-	__raw_writel(0, base + AR71XX_RESET_REG_MISC_INT_ENABLE);
-	__raw_writel(0, base + AR71XX_RESET_REG_MISC_INT_STATUS);
-
 	if (soc_is_ar71xx() || soc_is_ar913x())
 		ath79_misc_irq_chip.irq_mask_ack = ar71xx_misc_irq_mask;
 	else if (soc_is_ar724x() ||
@@ -111,20 +108,12 @@ static void __init ath79_misc_irq_init(void)
 	else
 		BUG();
 
-	for (i = ATH79_MISC_IRQ_BASE;
-	     i < ATH79_MISC_IRQ_BASE + ATH79_MISC_IRQ_COUNT; i++) {
-		irq_set_chip_and_handler(i, &ath79_misc_irq_chip,
-					 handle_level_irq);
-	}
-
-	irq_set_chained_handler(ATH79_CPU_IRQ(6), ath79_misc_irq_handler);
+	ath79_misc_intc_domain_init(NULL, ATH79_CPU_IRQ(6));
 }
 
-static void ar934x_ip2_irq_dispatch(unsigned int irq, struct irq_desc *desc)
+static void ar934x_ip2_irq_dispatch(struct irq_desc *desc)
 {
 	u32 status;
-
-	disable_irq_nosync(irq);
 
 	status = ath79_reset_rr(AR934X_RESET_REG_PCIE_WMAC_INT_STATUS);
 
@@ -137,8 +126,6 @@ static void ar934x_ip2_irq_dispatch(unsigned int irq, struct irq_desc *desc)
 	} else {
 		spurious_interrupt();
 	}
-
-	enable_irq(irq);
 }
 
 static void ar934x_ip2_irq_init(void)
@@ -153,18 +140,16 @@ static void ar934x_ip2_irq_init(void)
 	irq_set_chained_handler(ATH79_CPU_IRQ(2), ar934x_ip2_irq_dispatch);
 }
 
-static void qca955x_ip2_irq_dispatch(unsigned int irq, struct irq_desc *desc)
+static void qca955x_ip2_irq_dispatch(struct irq_desc *desc)
 {
 	u32 status;
-
-	disable_irq_nosync(irq);
 
 	status = ath79_reset_rr(QCA955X_RESET_REG_EXT_INT_STATUS);
 	status &= QCA955X_EXT_INT_PCIE_RC1_ALL | QCA955X_EXT_INT_WMAC_ALL;
 
 	if (status == 0) {
 		spurious_interrupt();
-		goto enable;
+		return;
 	}
 
 	if (status & QCA955X_EXT_INT_PCIE_RC1_ALL) {
@@ -176,16 +161,11 @@ static void qca955x_ip2_irq_dispatch(unsigned int irq, struct irq_desc *desc)
 		/* TODO: flush DDR? */
 		generic_handle_irq(ATH79_IP2_IRQ(1));
 	}
-
-enable:
-	enable_irq(irq);
 }
 
-static void qca955x_ip3_irq_dispatch(unsigned int irq, struct irq_desc *desc)
+static void qca955x_ip3_irq_dispatch(struct irq_desc *desc)
 {
 	u32 status;
-
-	disable_irq_nosync(irq);
 
 	status = ath79_reset_rr(QCA955X_RESET_REG_EXT_INT_STATUS);
 	status &= QCA955X_EXT_INT_PCIE_RC2_ALL |
@@ -194,7 +174,7 @@ static void qca955x_ip3_irq_dispatch(unsigned int irq, struct irq_desc *desc)
 
 	if (status == 0) {
 		spurious_interrupt();
-		goto enable;
+		return;
 	}
 
 	if (status & QCA955X_EXT_INT_USB1) {
@@ -211,9 +191,6 @@ static void qca955x_ip3_irq_dispatch(unsigned int irq, struct irq_desc *desc)
 		/* TODO: flush DDR? */
 		generic_handle_irq(ATH79_IP3_IRQ(2));
 	}
-
-enable:
-	enable_irq(irq);
 }
 
 static void qca955x_irq_init(void)
@@ -271,10 +248,10 @@ asmlinkage void plat_irq_dispatch(void)
 	}
 }
 
-#ifdef CONFIG_IRQCHIP
 static int misc_map(struct irq_domain *d, unsigned int irq, irq_hw_number_t hw)
 {
 	irq_set_chip_and_handler(irq, &ath79_misc_irq_chip, handle_level_irq);
+	irq_set_chip_data(irq, d->host_data);
 	return 0;
 }
 
@@ -283,19 +260,14 @@ static const struct irq_domain_ops misc_irq_domain_ops = {
 	.map = misc_map,
 };
 
-static int __init ath79_misc_intc_of_init(
-	struct device_node *node, struct device_node *parent)
+static void __init ath79_misc_intc_domain_init(
+	struct device_node *node, int irq)
 {
 	void __iomem *base = ath79_reset_base;
 	struct irq_domain *domain;
-	int irq;
-
-	irq = irq_of_parse_and_map(node, 0);
-	if (!irq)
-		panic("Failed to get MISC IRQ");
 
 	domain = irq_domain_add_legacy(node, ATH79_MISC_IRQ_COUNT,
-			ATH79_MISC_IRQ_BASE, 0, &misc_irq_domain_ops, NULL);
+			ATH79_MISC_IRQ_BASE, 0, &misc_irq_domain_ops, base);
 	if (!domain)
 		panic("Failed to add MISC irqdomain");
 
@@ -303,13 +275,41 @@ static int __init ath79_misc_intc_of_init(
 	__raw_writel(0, base + AR71XX_RESET_REG_MISC_INT_ENABLE);
 	__raw_writel(0, base + AR71XX_RESET_REG_MISC_INT_STATUS);
 
+	irq_set_chained_handler_and_data(irq, ath79_misc_irq_handler, domain);
+}
 
-	irq_set_chained_handler(irq, ath79_misc_irq_handler);
+static int __init ath79_misc_intc_of_init(
+	struct device_node *node, struct device_node *parent)
+{
+	int irq;
 
+	irq = irq_of_parse_and_map(node, 0);
+	if (!irq)
+		panic("Failed to get MISC IRQ");
+
+	ath79_misc_intc_domain_init(node, irq);
 	return 0;
 }
-IRQCHIP_DECLARE(ath79_misc_intc, "qca,ar7100-misc-intc",
-		ath79_misc_intc_of_init);
+
+static int __init ar7100_misc_intc_of_init(
+	struct device_node *node, struct device_node *parent)
+{
+	ath79_misc_irq_chip.irq_mask_ack = ar71xx_misc_irq_mask;
+	return ath79_misc_intc_of_init(node, parent);
+}
+
+IRQCHIP_DECLARE(ar7100_misc_intc, "qca,ar7100-misc-intc",
+		ar7100_misc_intc_of_init);
+
+static int __init ar7240_misc_intc_of_init(
+	struct device_node *node, struct device_node *parent)
+{
+	ath79_misc_irq_chip.irq_ack = ar724x_misc_irq_ack;
+	return ath79_misc_intc_of_init(node, parent);
+}
+
+IRQCHIP_DECLARE(ar7240_misc_intc, "qca,ar7240-misc-intc",
+		ar7240_misc_intc_of_init);
 
 static int __init ar79_cpu_intc_of_init(
 	struct device_node *node, struct device_node *parent)
@@ -345,8 +345,6 @@ static int __init ar79_cpu_intc_of_init(
 }
 IRQCHIP_DECLARE(ar79_cpu_intc, "qca,ar7100-cpu-intc",
 		ar79_cpu_intc_of_init);
-
-#endif
 
 void __init arch_init_irq(void)
 {

@@ -42,6 +42,7 @@ struct pci_controller_ops {
 #endif
 
 	int             (*dma_set_mask)(struct pci_dev *dev, u64 dma_mask);
+	u64		(*dma_get_required_mask)(struct pci_dev *dev);
 
 	void		(*shutdown)(struct pci_controller *);
 };
@@ -204,6 +205,7 @@ struct pci_dn {
 
 	int	pci_ext_config_space;	/* for pci devices */
 
+	struct	pci_dev *pcidev;	/* back-pointer to the pci device */
 #ifdef CONFIG_EEH
 	struct eeh_dev *edev;		/* eeh device */
 #endif

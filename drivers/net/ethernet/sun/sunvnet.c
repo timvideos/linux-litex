@@ -389,17 +389,27 @@ static int vnet_rx_one(struct vnet_port *port, struct vio_net_desc *desc)
 	if (vio_version_after_eq(&port->vio, 1, 8)) {
 		struct vio_net_dext *dext = vio_net_ext(desc);
 
+		skb_reset_network_header(skb);
+
 		if (dext->flags & VNET_PKT_HCK_IPV4_HDRCKSUM) {
 			if (skb->protocol == ETH_P_IP) {
-				struct iphdr *iph = (struct iphdr *)skb->data;
+				struct iphdr *iph = ip_hdr(skb);
 
 				iph->check = 0;
 				ip_send_check(iph);
 			}
 		}
 		if ((dext->flags & VNET_PKT_HCK_FULLCKSUM) &&
-		    skb->ip_summed == CHECKSUM_NONE)
-			vnet_fullcsum(skb);
+		    skb->ip_summed == CHECKSUM_NONE) {
+			if (skb->protocol == htons(ETH_P_IP)) {
+				struct iphdr *iph = ip_hdr(skb);
+				int ihl = iph->ihl * 4;
+
+				skb_reset_transport_header(skb);
+				skb_set_transport_header(skb, ihl);
+				vnet_fullcsum(skb);
+			}
+		}
 		if (dext->flags & VNET_PKT_HCK_IPV4_HDRCKSUM_OK) {
 			skb->ip_summed = CHECKSUM_PARTIAL;
 			skb->csum_level = 0;
@@ -1756,7 +1766,8 @@ static const struct net_device_ops vnet_ops = {
 #endif
 };
 
-static struct vnet *vnet_new(const u64 *local_mac)
+static struct vnet *vnet_new(const u64 *local_mac,
+			     struct vio_dev *vdev)
 {
 	struct net_device *dev;
 	struct vnet *vp;
@@ -1790,6 +1801,8 @@ static struct vnet *vnet_new(const u64 *local_mac)
 			   NETIF_F_HW_CSUM | NETIF_F_SG;
 	dev->features = dev->hw_features;
 
+	SET_NETDEV_DEV(dev, &vdev->dev);
+
 	err = register_netdev(dev);
 	if (err) {
 		pr_err("Cannot register net device, aborting\n");
@@ -1808,7 +1821,8 @@ err_out_free_dev:
 	return ERR_PTR(err);
 }
 
-static struct vnet *vnet_find_or_create(const u64 *local_mac)
+static struct vnet *vnet_find_or_create(const u64 *local_mac,
+					struct vio_dev *vdev)
 {
 	struct vnet *iter, *vp;
 
@@ -1821,7 +1835,7 @@ static struct vnet *vnet_find_or_create(const u64 *local_mac)
 		}
 	}
 	if (!vp)
-		vp = vnet_new(local_mac);
+		vp = vnet_new(local_mac, vdev);
 	mutex_unlock(&vnet_list_mutex);
 
 	return vp;
@@ -1848,7 +1862,8 @@ static void vnet_cleanup(void)
 static const char *local_mac_prop = "local-mac-address";
 
 static struct vnet *vnet_find_parent(struct mdesc_handle *hp,
-						u64 port_node)
+				     u64 port_node,
+				     struct vio_dev *vdev)
 {
 	const u64 *local_mac = NULL;
 	u64 a;
@@ -1869,7 +1884,7 @@ static struct vnet *vnet_find_parent(struct mdesc_handle *hp,
 	if (!local_mac)
 		return ERR_PTR(-ENODEV);
 
-	return vnet_find_or_create(local_mac);
+	return vnet_find_or_create(local_mac, vdev);
 }
 
 static struct ldc_channel_config vnet_ldc_cfg = {
@@ -1923,7 +1938,7 @@ static int vnet_port_probe(struct vio_dev *vdev, const struct vio_device_id *id)
 
 	hp = mdesc_grab();
 
-	vp = vnet_find_parent(hp, vdev->mp);
+	vp = vnet_find_parent(hp, vdev->mp, vdev);
 	if (IS_ERR(vp)) {
 		pr_err("Cannot find port parent vnet\n");
 		err = PTR_ERR(vp);

@@ -92,18 +92,9 @@ struct mtk_afe_memif_data {
 struct mtk_afe_memif {
 	unsigned int phys_buf_addr;
 	int buffer_size;
-	unsigned int hw_ptr;		/* Previous IRQ's HW ptr */
 	struct snd_pcm_substream *substream;
 	const struct mtk_afe_memif_data *data;
 	const struct mtk_afe_irq_data *irqdata;
 };
 
-struct mtk_afe {
-	/* address for ioremap audio hardware register */
-	void __iomem *base_addr;
-	struct device *dev;
-	struct regmap *regmap;
-	struct mtk_afe_memif memif[MTK_AFE_MEMIF_NUM];
-	struct clk *clocks[MTK_CLK_NUM];
-};
 #endif

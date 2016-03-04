@@ -37,7 +37,7 @@
 #include <linux/videodev2.h>
 
 #include <media/media-entity.h>
-#include <media/ov2659.h>
+#include <media/i2c/ov2659.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-device.h>
@@ -909,7 +909,6 @@ static void ov2659_pll_calc_params(struct ov2659 *ov2659)
 	u8 ctrl1_reg = 0, ctrl2_reg = 0, ctrl3_reg = 0;
 	struct i2c_client *client = ov2659->client;
 	unsigned int desired = pdata->link_frequency;
-	u32 s_prediv = 1, s_postdiv = 1, s_mult = 1;
 	u32 prediv, postdiv, mult;
 	u32 bestdelta = -1;
 	u32 delta, actual;
@@ -929,9 +928,6 @@ static void ov2659_pll_calc_params(struct ov2659 *ov2659)
 
 				if ((delta < bestdelta) || (bestdelta == -1)) {
 					bestdelta = delta;
-					s_mult    = mult;
-					s_prediv  = prediv;
-					s_postdiv = postdiv;
 					ctrl1_reg = ctrl1[i].reg;
 					ctrl2_reg = mult;
 					ctrl3_reg = ctrl3[j].reg;
@@ -1253,7 +1249,7 @@ static int ov2659_s_ctrl(struct v4l2_ctrl *ctrl)
 	return 0;
 }
 
-static struct v4l2_ctrl_ops ov2659_ctrl_ops = {
+static const struct v4l2_ctrl_ops ov2659_ctrl_ops = {
 	.s_ctrl = ov2659_s_ctrl,
 };
 
@@ -1449,8 +1445,8 @@ static int ov2659_probe(struct i2c_client *client,
 
 #if defined(CONFIG_MEDIA_CONTROLLER)
 	ov2659->pad.flags = MEDIA_PAD_FL_SOURCE;
-	sd->entity.type = MEDIA_ENT_T_V4L2_SUBDEV_SENSOR;
-	ret = media_entity_init(&sd->entity, 1, &ov2659->pad, 0);
+	sd->entity.function = MEDIA_ENT_F_CAM_SENSOR;
+	ret = media_entity_pads_init(&sd->entity, 1, &ov2659->pad);
 	if (ret < 0) {
 		v4l2_ctrl_handler_free(&ov2659->ctrls);
 		return ret;

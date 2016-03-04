@@ -294,6 +294,7 @@ enum print_arg_type {
 	PRINT_OP,
 	PRINT_FUNC,
 	PRINT_BITMASK,
+	PRINT_DYNAMIC_ARRAY_LEN,
 };
 
 struct print_arg {
@@ -453,6 +454,10 @@ struct cmdline_list;
 struct func_map;
 struct func_list;
 struct event_handler;
+struct func_resolver;
+
+typedef char *(pevent_func_resolver_t)(void *priv,
+				       unsigned long long *addrp, char **modp);
 
 struct pevent {
 	int ref_count;
@@ -481,6 +486,7 @@ struct pevent {
 	int cmdline_count;
 
 	struct func_map *func_map;
+	struct func_resolver *func_resolver;
 	struct func_list *funclist;
 	unsigned int func_count;
 
@@ -611,6 +617,9 @@ enum trace_flag_type {
 	TRACE_FLAG_SOFTIRQ		= 0x10,
 };
 
+int pevent_set_function_resolver(struct pevent *pevent,
+				 pevent_func_resolver_t *func, void *priv);
+void pevent_reset_function_resolver(struct pevent *pevent);
 int pevent_register_comm(struct pevent *pevent, const char *comm, int pid);
 int pevent_register_trace_clock(struct pevent *pevent, const char *trace_clock);
 int pevent_register_function(struct pevent *pevent, char *name,
@@ -696,6 +705,10 @@ struct cmdline *pevent_data_pid_from_comm(struct pevent *pevent, const char *com
 					  struct cmdline *next);
 int pevent_cmdline_pid(struct pevent *pevent, struct cmdline *cmdline);
 
+void pevent_print_field(struct trace_seq *s, void *data,
+			struct format_field *field);
+void pevent_print_fields(struct trace_seq *s, void *data,
+			 int size __maybe_unused, struct event_format *event);
 void pevent_event_info(struct trace_seq *s, struct event_format *event,
 		       struct pevent_record *record);
 int pevent_strerror(struct pevent *pevent, enum pevent_errno errnum,

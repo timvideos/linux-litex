@@ -2,17 +2,19 @@
 #define _ASM_S390_TOPOLOGY_H
 
 #include <linux/cpumask.h>
+#include <asm/numa.h>
 
 struct sysinfo_15_1_x;
 struct cpu;
 
-#ifdef CONFIG_SCHED_BOOK
+#ifdef CONFIG_SCHED_TOPOLOGY
 
 struct cpu_topology_s390 {
 	unsigned short thread_id;
 	unsigned short core_id;
 	unsigned short socket_id;
 	unsigned short book_id;
+	unsigned short node_id;
 	cpumask_t thread_mask;
 	cpumask_t core_mask;
 	cpumask_t book_mask;
@@ -38,19 +40,56 @@ void store_topology(struct sysinfo_15_1_x *info);
 void topology_expect_change(void);
 const struct cpumask *cpu_coregroup_mask(int cpu);
 
-#else /* CONFIG_SCHED_BOOK */
+#else /* CONFIG_SCHED_TOPOLOGY */
 
 static inline void topology_schedule_update(void) { }
 static inline int topology_cpu_init(struct cpu *cpu) { return 0; }
 static inline void topology_expect_change(void) { }
 
-#endif /* CONFIG_SCHED_BOOK */
+#endif /* CONFIG_SCHED_TOPOLOGY */
 
 #define POLARIZATION_UNKNOWN	(-1)
 #define POLARIZATION_HRZ	(0)
 #define POLARIZATION_VL		(1)
 #define POLARIZATION_VM		(2)
 #define POLARIZATION_VH		(3)
+
+#define SD_BOOK_INIT	SD_CPU_INIT
+
+#ifdef CONFIG_NUMA
+
+#define cpu_to_node cpu_to_node
+static inline int cpu_to_node(int cpu)
+{
+	return per_cpu(cpu_topology, cpu).node_id;
+}
+
+/* Returns a pointer to the cpumask of CPUs on node 'node'. */
+#define cpumask_of_node cpumask_of_node
+static inline const struct cpumask *cpumask_of_node(int node)
+{
+	return &node_to_cpumask_map[node];
+}
+
+/*
+ * Returns the number of the node containing node 'node'. This
+ * architecture is flat, so it is a pretty simple function!
+ */
+#define parent_node(node) (node)
+
+#define pcibus_to_node(bus) __pcibus_to_node(bus)
+
+#define node_distance(a, b) __node_distance(a, b)
+
+#else /* !CONFIG_NUMA */
+
+#define numa_node_id numa_node_id
+static inline int numa_node_id(void)
+{
+	return 0;
+}
+
+#endif /* CONFIG_NUMA */
 
 #include <asm-generic/topology.h>
 

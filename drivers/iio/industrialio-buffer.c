@@ -71,8 +71,9 @@ static bool iio_buffer_ready(struct iio_dev *indio_dev, struct iio_buffer *buf,
 
 	if (avail >= to_wait) {
 		/* force a flush for non-blocking reads */
-		if (!to_wait && !avail && to_flush)
-			iio_buffer_flush_hwfifo(indio_dev, buf, to_flush);
+		if (!to_wait && avail < to_flush)
+			iio_buffer_flush_hwfifo(indio_dev, buf,
+						to_flush - avail);
 		return true;
 	}
 
@@ -90,9 +91,16 @@ static bool iio_buffer_ready(struct iio_dev *indio_dev, struct iio_buffer *buf,
 
 /**
  * iio_buffer_read_first_n_outer() - chrdev read for buffer access
+ * @filp:	File structure pointer for the char device
+ * @buf:	Destination buffer for iio buffer read
+ * @n:		First n bytes to read
+ * @f_ps:	Long offset provided by the user as a seek position
  *
  * This function relies on all buffer implementations having an
  * iio_buffer as their first element.
+ *
+ * Return: negative values corresponding to error codes or ret != 0
+ *	   for ending the reading activity
  **/
 ssize_t iio_buffer_read_first_n_outer(struct file *filp, char __user *buf,
 				      size_t n, loff_t *f_ps)
@@ -100,8 +108,7 @@ ssize_t iio_buffer_read_first_n_outer(struct file *filp, char __user *buf,
 	struct iio_dev *indio_dev = filp->private_data;
 	struct iio_buffer *rb = indio_dev->buffer;
 	size_t datum_size;
-	size_t to_wait = 0;
-	size_t to_read;
+	size_t to_wait;
 	int ret;
 
 	if (!indio_dev->info)
@@ -119,14 +126,14 @@ ssize_t iio_buffer_read_first_n_outer(struct file *filp, char __user *buf,
 	if (!datum_size)
 		return 0;
 
-	to_read = min_t(size_t, n / datum_size, rb->watermark);
-
-	if (!(filp->f_flags & O_NONBLOCK))
-		to_wait = to_read;
+	if (filp->f_flags & O_NONBLOCK)
+		to_wait = 0;
+	else
+		to_wait = min_t(size_t, n / datum_size, rb->watermark);
 
 	do {
 		ret = wait_event_interruptible(rb->pollq,
-			iio_buffer_ready(indio_dev, rb, to_wait, to_read));
+		      iio_buffer_ready(indio_dev, rb, to_wait, n / datum_size));
 		if (ret)
 			return ret;
 
@@ -143,6 +150,12 @@ ssize_t iio_buffer_read_first_n_outer(struct file *filp, char __user *buf,
 
 /**
  * iio_buffer_poll() - poll the buffer to find out if it has data
+ * @filp:	File structure pointer for device access
+ * @wait:	Poll table structure pointer for which the driver adds
+ *		a wait queue
+ *
+ * Return: (POLLIN | POLLRDNORM) if data is available for reading
+ *	   or 0 for other cases
  */
 unsigned int iio_buffer_poll(struct file *filp,
 			     struct poll_table_struct *wait)
@@ -151,7 +164,7 @@ unsigned int iio_buffer_poll(struct file *filp,
 	struct iio_buffer *rb = indio_dev->buffer;
 
 	if (!indio_dev->info)
-		return -ENODEV;
+		return 0;
 
 	poll_wait(filp, &rb->pollq, wait);
 	if (iio_buffer_ready(indio_dev, rb, rb->watermark, 0))
@@ -180,7 +193,8 @@ void iio_buffer_init(struct iio_buffer *buffer)
 	INIT_LIST_HEAD(&buffer->buffer_list);
 	init_waitqueue_head(&buffer->pollq);
 	kref_init(&buffer->ref);
-	buffer->watermark = 1;
+	if (!buffer->watermark)
+		buffer->watermark = 1;
 }
 EXPORT_SYMBOL(iio_buffer_init);
 
@@ -289,7 +303,7 @@ static int iio_scan_mask_set(struct iio_dev *indio_dev,
 	if (trialmask == NULL)
 		return -ENOMEM;
 	if (!indio_dev->masklength) {
-		WARN_ON("Trying to set scanmask prior to registering buffer\n");
+		WARN(1, "Trying to set scanmask prior to registering buffer\n");
 		goto err_invalid_mask;
 	}
 	bitmap_copy(trialmask, buffer->scan_mask, indio_dev->masklength);
@@ -554,6 +568,22 @@ static void iio_buffer_deactivate_all(struct iio_dev *indio_dev)
 		iio_buffer_deactivate(buffer);
 }
 
+static int iio_buffer_enable(struct iio_buffer *buffer,
+	struct iio_dev *indio_dev)
+{
+	if (!buffer->access->enable)
+		return 0;
+	return buffer->access->enable(buffer, indio_dev);
+}
+
+static int iio_buffer_disable(struct iio_buffer *buffer,
+	struct iio_dev *indio_dev)
+{
+	if (!buffer->access->disable)
+		return 0;
+	return buffer->access->disable(buffer, indio_dev);
+}
+
 static void iio_buffer_update_bytes_per_datum(struct iio_dev *indio_dev,
 	struct iio_buffer *buffer)
 {
@@ -597,6 +627,7 @@ static void iio_free_scan_mask(struct iio_dev *indio_dev,
 
 struct iio_device_config {
 	unsigned int mode;
+	unsigned int watermark;
 	const unsigned long *scan_mask;
 	unsigned int scan_bytes;
 	bool scan_timestamp;
@@ -629,10 +660,14 @@ static int iio_verify_update(struct iio_dev *indio_dev,
 		if (buffer == remove_buffer)
 			continue;
 		modes &= buffer->access->modes;
+		config->watermark = min(config->watermark, buffer->watermark);
 	}
 
-	if (insert_buffer)
+	if (insert_buffer) {
 		modes &= insert_buffer->access->modes;
+		config->watermark = min(config->watermark,
+			insert_buffer->watermark);
+	}
 
 	/* Definitely possible for devices to support both of these. */
 	if ((modes & INDIO_BUFFER_TRIGGERED) && indio_dev->trig) {
@@ -700,6 +735,7 @@ static int iio_verify_update(struct iio_dev *indio_dev,
 static int iio_enable_buffers(struct iio_dev *indio_dev,
 	struct iio_device_config *config)
 {
+	struct iio_buffer *buffer;
 	int ret;
 
 	indio_dev->active_scan_mask = config->scan_mask;
@@ -730,6 +766,16 @@ static int iio_enable_buffers(struct iio_dev *indio_dev,
 		}
 	}
 
+	if (indio_dev->info->hwfifo_set_watermark)
+		indio_dev->info->hwfifo_set_watermark(indio_dev,
+			config->watermark);
+
+	list_for_each_entry(buffer, &indio_dev->buffer_list, buffer_list) {
+		ret = iio_buffer_enable(buffer, indio_dev);
+		if (ret)
+			goto err_disable_buffers;
+	}
+
 	indio_dev->currentmode = config->mode;
 
 	if (indio_dev->setup_ops->postenable) {
@@ -737,12 +783,16 @@ static int iio_enable_buffers(struct iio_dev *indio_dev,
 		if (ret) {
 			dev_dbg(&indio_dev->dev,
 			       "Buffer not started: postenable failed (%d)\n", ret);
-			goto err_run_postdisable;
+			goto err_disable_buffers;
 		}
 	}
 
 	return 0;
 
+err_disable_buffers:
+	list_for_each_entry_continue_reverse(buffer, &indio_dev->buffer_list,
+					     buffer_list)
+		iio_buffer_disable(buffer, indio_dev);
 err_run_postdisable:
 	indio_dev->currentmode = INDIO_DIRECT_MODE;
 	if (indio_dev->setup_ops->postdisable)
@@ -755,6 +805,7 @@ err_undo_config:
 
 static int iio_disable_buffers(struct iio_dev *indio_dev)
 {
+	struct iio_buffer *buffer;
 	int ret = 0;
 	int ret2;
 
@@ -771,6 +822,12 @@ static int iio_disable_buffers(struct iio_dev *indio_dev)
 
 	if (indio_dev->setup_ops->predisable) {
 		ret2 = indio_dev->setup_ops->predisable(indio_dev);
+		if (ret2 && !ret)
+			ret = ret2;
+	}
+
+	list_for_each_entry(buffer, &indio_dev->buffer_list, buffer_list) {
+		ret2 = iio_buffer_disable(buffer, indio_dev);
 		if (ret2 && !ret)
 			ret = ret2;
 	}
@@ -961,9 +1018,6 @@ static ssize_t iio_buffer_store_watermark(struct device *dev,
 	}
 
 	buffer->watermark = val;
-
-	if (indio_dev->info->hwfifo_set_watermark)
-		indio_dev->info->hwfifo_set_watermark(indio_dev, val);
 out:
 	mutex_unlock(&indio_dev->mlock);
 
@@ -978,6 +1032,8 @@ static DEVICE_ATTR(enable, S_IRUGO | S_IWUSR,
 		   iio_buffer_show_enable, iio_buffer_store_enable);
 static DEVICE_ATTR(watermark, S_IRUGO | S_IWUSR,
 		   iio_buffer_show_watermark, iio_buffer_store_watermark);
+static struct device_attribute dev_attr_watermark_ro = __ATTR(watermark,
+	S_IRUGO, iio_buffer_show_watermark, NULL);
 
 static struct attribute *iio_buffer_attrs[] = {
 	&dev_attr_length.attr,
@@ -1019,6 +1075,9 @@ int iio_buffer_alloc_sysfs_and_mask(struct iio_dev *indio_dev)
 	memcpy(attr, iio_buffer_attrs, sizeof(iio_buffer_attrs));
 	if (!buffer->access->set_length)
 		attr[0] = &dev_attr_length_ro.attr;
+
+	if (buffer->access->flags & INDIO_BUFFER_FLAG_FIXED_WATERMARK)
+		attr[2] = &dev_attr_watermark_ro.attr;
 
 	if (buffer->attrs)
 		memcpy(&attr[ARRAY_SIZE(iio_buffer_attrs)], buffer->attrs,
@@ -1136,7 +1195,7 @@ int iio_scan_mask_query(struct iio_dev *indio_dev,
 EXPORT_SYMBOL_GPL(iio_scan_mask_query);
 
 /**
- * struct iio_demux_table() - table describing demux memcpy ops
+ * struct iio_demux_table - table describing demux memcpy ops
  * @from:	index to copy from
  * @to:		index to copy to
  * @length:	how many bytes to copy

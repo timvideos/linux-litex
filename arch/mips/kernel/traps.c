@@ -37,6 +37,7 @@
 #include <linux/irq.h>
 #include <linux/perf_event.h>
 
+#include <asm/addrspace.h>
 #include <asm/bootinfo.h>
 #include <asm/branch.h>
 #include <asm/break.h>
@@ -370,11 +371,6 @@ void show_registers(struct pt_regs *regs)
 	set_fs(old_fs);
 }
 
-static int regs_to_trapnr(struct pt_regs *regs)
-{
-	return (regs->cp0_cause >> 2) & 0x1f;
-}
-
 static DEFINE_RAW_SPINLOCK(die_lock);
 
 void __noreturn die(const char *str, struct pt_regs *regs)
@@ -384,7 +380,7 @@ void __noreturn die(const char *str, struct pt_regs *regs)
 
 	oops_enter();
 
-	if (notify_die(DIE_OOPS, str, regs, 0, regs_to_trapnr(regs),
+	if (notify_die(DIE_OOPS, str, regs, 0, current->thread.trap_nr,
 		       SIGSEGV) == NOTIFY_STOP)
 		sig = 0;
 
@@ -470,7 +466,7 @@ asmlinkage void do_be(struct pt_regs *regs)
 	printk(KERN_ALERT "%s bus error, epc == %0*lx, ra == %0*lx\n",
 	       data ? "Data" : "Instruction",
 	       field, regs->cp0_epc, field, regs->regs[31]);
-	if (notify_die(DIE_OOPS, "bus error", regs, 0, regs_to_trapnr(regs),
+	if (notify_die(DIE_OOPS, "bus error", regs, 0, current->thread.trap_nr,
 		       SIGBUS) == NOTIFY_STOP)
 		goto out;
 
@@ -667,7 +663,7 @@ static int simulate_rdhwr_normal(struct pt_regs *regs, unsigned int opcode)
 	return -1;
 }
 
-static int simulate_rdhwr_mm(struct pt_regs *regs, unsigned short opcode)
+static int simulate_rdhwr_mm(struct pt_regs *regs, unsigned int opcode)
 {
 	if ((opcode & MM_POOL32A_FUNC) == MM_RDHWR) {
 		int rd = (opcode & MM_RS) >> 16;
@@ -826,7 +822,7 @@ asmlinkage void do_fpe(struct pt_regs *regs, unsigned long fcr31)
 	int sig;
 
 	prev_state = exception_enter();
-	if (notify_die(DIE_FP, "FP exception", regs, 0, regs_to_trapnr(regs),
+	if (notify_die(DIE_FP, "FP exception", regs, 0, current->thread.trap_nr,
 		       SIGFPE) == NOTIFY_STOP)
 		goto out;
 
@@ -882,11 +878,12 @@ void do_trap_or_bp(struct pt_regs *regs, unsigned int code,
 	char b[40];
 
 #ifdef CONFIG_KGDB_LOW_LEVEL_TRAP
-	if (kgdb_ll_trap(DIE_TRAP, str, regs, code, regs_to_trapnr(regs), SIGTRAP) == NOTIFY_STOP)
+	if (kgdb_ll_trap(DIE_TRAP, str, regs, code, current->thread.trap_nr,
+			 SIGTRAP) == NOTIFY_STOP)
 		return;
 #endif /* CONFIG_KGDB_LOW_LEVEL_TRAP */
 
-	if (notify_die(DIE_TRAP, str, regs, code, regs_to_trapnr(regs),
+	if (notify_die(DIE_TRAP, str, regs, code, current->thread.trap_nr,
 		       SIGTRAP) == NOTIFY_STOP)
 		return;
 
@@ -948,6 +945,7 @@ asmlinkage void do_bp(struct pt_regs *regs)
 		set_fs(KERNEL_DS);
 
 	prev_state = exception_enter();
+	current->thread.trap_nr = (regs->cp0_cause >> 2) & 0x1f;
 	if (get_isa16_mode(regs->cp0_epc)) {
 		u16 instr[2];
 
@@ -987,15 +985,27 @@ asmlinkage void do_bp(struct pt_regs *regs)
 	 * pertain to them.
 	 */
 	switch (bcode) {
+	case BRK_UPROBE:
+		if (notify_die(DIE_UPROBE, "uprobe", regs, bcode,
+			       current->thread.trap_nr, SIGTRAP) == NOTIFY_STOP)
+			goto out;
+		else
+			break;
+	case BRK_UPROBE_XOL:
+		if (notify_die(DIE_UPROBE_XOL, "uprobe_xol", regs, bcode,
+			       current->thread.trap_nr, SIGTRAP) == NOTIFY_STOP)
+			goto out;
+		else
+			break;
 	case BRK_KPROBE_BP:
 		if (notify_die(DIE_BREAK, "debug", regs, bcode,
-			       regs_to_trapnr(regs), SIGTRAP) == NOTIFY_STOP)
+			       current->thread.trap_nr, SIGTRAP) == NOTIFY_STOP)
 			goto out;
 		else
 			break;
 	case BRK_KPROBE_SSTEPBP:
 		if (notify_die(DIE_SSTEPBP, "single_step", regs, bcode,
-			       regs_to_trapnr(regs), SIGTRAP) == NOTIFY_STOP)
+			       current->thread.trap_nr, SIGTRAP) == NOTIFY_STOP)
 			goto out;
 		else
 			break;
@@ -1028,6 +1038,7 @@ asmlinkage void do_tr(struct pt_regs *regs)
 		set_fs(get_ds());
 
 	prev_state = exception_enter();
+	current->thread.trap_nr = (regs->cp0_cause >> 2) & 0x1f;
 	if (get_isa16_mode(regs->cp0_epc)) {
 		if (__get_user(instr[0], (u16 __user *)(epc + 0)) ||
 		    __get_user(instr[1], (u16 __user *)(epc + 2)))
@@ -1094,8 +1105,9 @@ asmlinkage void do_ri(struct pt_regs *regs)
 no_r2_instr:
 
 	prev_state = exception_enter();
+	current->thread.trap_nr = (regs->cp0_cause >> 2) & 0x1f;
 
-	if (notify_die(DIE_RI, "RI Fault", regs, 0, regs_to_trapnr(regs),
+	if (notify_die(DIE_RI, "RI Fault", regs, 0, current->thread.trap_nr,
 		       SIGILL) == NOTIFY_STOP)
 		goto out;
 
@@ -1107,11 +1119,12 @@ no_r2_instr:
 	if (get_isa16_mode(regs->cp0_epc)) {
 		unsigned short mmop[2] = { 0 };
 
-		if (unlikely(get_user(mmop[0], epc) < 0))
+		if (unlikely(get_user(mmop[0], (u16 __user *)epc + 0) < 0))
 			status = SIGSEGV;
-		if (unlikely(get_user(mmop[1], epc) < 0))
+		if (unlikely(get_user(mmop[1], (u16 __user *)epc + 1) < 0))
 			status = SIGSEGV;
-		opcode = (mmop[0] << 16) | mmop[1];
+		opcode = mmop[0];
+		opcode = (opcode << 16) | mmop[1];
 
 		if (status < 0)
 			status = simulate_rdhwr_mm(regs, opcode);
@@ -1357,26 +1370,12 @@ asmlinkage void do_cpu(struct pt_regs *regs)
 		if (unlikely(compute_return_epc(regs) < 0))
 			break;
 
-		if (get_isa16_mode(regs->cp0_epc)) {
-			unsigned short mmop[2] = { 0 };
-
-			if (unlikely(get_user(mmop[0], epc) < 0))
-				status = SIGSEGV;
-			if (unlikely(get_user(mmop[1], epc) < 0))
-				status = SIGSEGV;
-			opcode = (mmop[0] << 16) | mmop[1];
-
-			if (status < 0)
-				status = simulate_rdhwr_mm(regs, opcode);
-		} else {
+		if (!get_isa16_mode(regs->cp0_epc)) {
 			if (unlikely(get_user(opcode, epc) < 0))
 				status = SIGSEGV;
 
 			if (!cpu_has_llsc && status < 0)
 				status = simulate_llsc(regs, opcode);
-
-			if (status < 0)
-				status = simulate_rdhwr_normal(regs, opcode);
 		}
 
 		if (status < 0)
@@ -1444,8 +1443,9 @@ asmlinkage void do_msa_fpe(struct pt_regs *regs, unsigned int msacsr)
 	enum ctx_state prev_state;
 
 	prev_state = exception_enter();
+	current->thread.trap_nr = (regs->cp0_cause >> 2) & 0x1f;
 	if (notify_die(DIE_MSAFP, "MSA FP exception", regs, 0,
-		       regs_to_trapnr(regs), SIGFPE) == NOTIFY_STOP)
+		       current->thread.trap_nr, SIGFPE) == NOTIFY_STOP)
 		goto out;
 
 	/* Clear MSACSR.Cause before enabling interrupts */
@@ -1523,7 +1523,6 @@ asmlinkage void do_watch(struct pt_regs *regs)
 
 asmlinkage void do_mcheck(struct pt_regs *regs)
 {
-	const int field = 2 * sizeof(unsigned long);
 	int multi_match = regs->cp0_status & ST0_TS;
 	enum ctx_state prev_state;
 	mm_segment_t old_fs = get_fs();
@@ -1532,19 +1531,8 @@ asmlinkage void do_mcheck(struct pt_regs *regs)
 	show_regs(regs);
 
 	if (multi_match) {
-		pr_err("Index	: %0x\n", read_c0_index());
-		pr_err("Pagemask: %0x\n", read_c0_pagemask());
-		pr_err("EntryHi : %0*lx\n", field, read_c0_entryhi());
-		pr_err("EntryLo0: %0*lx\n", field, read_c0_entrylo0());
-		pr_err("EntryLo1: %0*lx\n", field, read_c0_entrylo1());
-		pr_err("Wired   : %0x\n", read_c0_wired());
-		pr_err("Pagegrain: %0x\n", read_c0_pagegrain());
-		if (cpu_has_htw) {
-			pr_err("PWField : %0*lx\n", field, read_c0_pwfield());
-			pr_err("PWSize  : %0*lx\n", field, read_c0_pwsize());
-			pr_err("PWCtl   : %0x\n", read_c0_pwctl());
-		}
-		pr_err("\n");
+		dump_tlb_regs();
+		pr_info("\n");
 		dump_tlb_all();
 	}
 
@@ -1651,6 +1639,7 @@ static inline void parity_protection_init(void)
 	case CPU_PROAPTIV:
 	case CPU_P5600:
 	case CPU_QEMU_GENERIC:
+	case CPU_I6400:
 		{
 #define ERRCTL_PE	0x80000000
 #define ERRCTL_L2P	0x00800000
@@ -1855,12 +1844,14 @@ void __noreturn nmi_exception_handler(struct pt_regs *regs)
 {
 	char str[100];
 
+	nmi_enter();
 	raw_notifier_call_chain(&nmi_chain, 0, regs);
 	bust_spinlocks(1);
 	snprintf(str, 100, "CPU%d NMI taken, CP0_EPC=%lx\n",
 		 smp_processor_id(), regs->cp0_epc);
 	regs->cp0_epc = read_c0_errorepc();
 	die(str, regs);
+	nmi_exit();
 }
 
 #define VECTORSPACING 0x100	/* for EI/VI mode */
@@ -2203,12 +2194,8 @@ void __init trap_init(void)
 		ebase = (unsigned long)
 			__alloc_bootmem(size, 1 << fls(size), 0);
 	} else {
-#ifdef CONFIG_KVM_GUEST
-#define KVM_GUEST_KSEG0     0x40000000
-        ebase = KVM_GUEST_KSEG0;
-#else
-        ebase = CKSEG0;
-#endif
+		ebase = CAC_BASE;
+
 		if (cpu_has_mips_r2_r6)
 			ebase += (read_c0_ebase() & 0x3ffff000);
 	}
@@ -2250,7 +2237,7 @@ void __init trap_init(void)
 	 * Only some CPUs have the watch exceptions.
 	 */
 	if (cpu_has_watch)
-		set_except_vector(23, handle_watch);
+		set_except_vector(EXCCODE_WATCH, handle_watch);
 
 	/*
 	 * Initialise interrupt handlers
@@ -2277,27 +2264,27 @@ void __init trap_init(void)
 	if (board_be_init)
 		board_be_init();
 
-	set_except_vector(0, using_rollback_handler() ? rollback_handle_int
-						      : handle_int);
-	set_except_vector(1, handle_tlbm);
-	set_except_vector(2, handle_tlbl);
-	set_except_vector(3, handle_tlbs);
+	set_except_vector(EXCCODE_INT, using_rollback_handler() ?
+					rollback_handle_int : handle_int);
+	set_except_vector(EXCCODE_MOD, handle_tlbm);
+	set_except_vector(EXCCODE_TLBL, handle_tlbl);
+	set_except_vector(EXCCODE_TLBS, handle_tlbs);
 
-	set_except_vector(4, handle_adel);
-	set_except_vector(5, handle_ades);
+	set_except_vector(EXCCODE_ADEL, handle_adel);
+	set_except_vector(EXCCODE_ADES, handle_ades);
 
-	set_except_vector(6, handle_ibe);
-	set_except_vector(7, handle_dbe);
+	set_except_vector(EXCCODE_IBE, handle_ibe);
+	set_except_vector(EXCCODE_DBE, handle_dbe);
 
-	set_except_vector(8, handle_sys);
-	set_except_vector(9, handle_bp);
-	set_except_vector(10, rdhwr_noopt ? handle_ri :
+	set_except_vector(EXCCODE_SYS, handle_sys);
+	set_except_vector(EXCCODE_BP, handle_bp);
+	set_except_vector(EXCCODE_RI, rdhwr_noopt ? handle_ri :
 			  (cpu_has_vtag_icache ?
 			   handle_ri_rdhwr_vivt : handle_ri_rdhwr));
-	set_except_vector(11, handle_cpu);
-	set_except_vector(12, handle_ov);
-	set_except_vector(13, handle_tr);
-	set_except_vector(14, handle_msa_fpe);
+	set_except_vector(EXCCODE_CPU, handle_cpu);
+	set_except_vector(EXCCODE_OV, handle_ov);
+	set_except_vector(EXCCODE_TR, handle_tr);
+	set_except_vector(EXCCODE_MSAFPE, handle_msa_fpe);
 
 	if (current_cpu_type() == CPU_R6000 ||
 	    current_cpu_type() == CPU_R6000A) {
@@ -2318,25 +2305,25 @@ void __init trap_init(void)
 		board_nmi_handler_setup();
 
 	if (cpu_has_fpu && !cpu_has_nofpuex)
-		set_except_vector(15, handle_fpe);
+		set_except_vector(EXCCODE_FPE, handle_fpe);
 
-	set_except_vector(16, handle_ftlb);
+	set_except_vector(MIPS_EXCCODE_TLBPAR, handle_ftlb);
 
 	if (cpu_has_rixiex) {
-		set_except_vector(19, tlb_do_page_fault_0);
-		set_except_vector(20, tlb_do_page_fault_0);
+		set_except_vector(EXCCODE_TLBRI, tlb_do_page_fault_0);
+		set_except_vector(EXCCODE_TLBXI, tlb_do_page_fault_0);
 	}
 
-	set_except_vector(21, handle_msa);
-	set_except_vector(22, handle_mdmx);
+	set_except_vector(EXCCODE_MSADIS, handle_msa);
+	set_except_vector(EXCCODE_MDMX, handle_mdmx);
 
 	if (cpu_has_mcheck)
-		set_except_vector(24, handle_mcheck);
+		set_except_vector(EXCCODE_MCHECK, handle_mcheck);
 
 	if (cpu_has_mipsmt)
-		set_except_vector(25, handle_mt);
+		set_except_vector(EXCCODE_THREAD, handle_mt);
 
-	set_except_vector(26, handle_dsp);
+	set_except_vector(EXCCODE_DSPDIS, handle_dsp);
 
 	if (board_cache_error_setup)
 		board_cache_error_setup();

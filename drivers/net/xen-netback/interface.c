@@ -171,6 +171,13 @@ static int xenvif_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	    !xenvif_schedulable(vif))
 		goto drop;
 
+	if (vif->multicast_control && skb->pkt_type == PACKET_MULTICAST) {
+		struct ethhdr *eth = (struct ethhdr *)skb->data;
+
+		if (!xenvif_mcast_match(vif, eth->h_dest))
+			goto drop;
+	}
+
 	cb = XENVIF_RX_CB(skb);
 	cb->expires = jiffies + vif->drain_timeout;
 
@@ -427,6 +434,7 @@ struct xenvif *xenvif_alloc(struct device *parent, domid_t domid,
 	vif->num_queues = 0;
 
 	spin_lock_init(&vif->lock);
+	INIT_LIST_HEAD(&vif->fe_mcast_addr);
 
 	dev->netdev_ops	= &xenvif_netdev_ops;
 	dev->hw_features = NETIF_F_SG |
@@ -607,6 +615,7 @@ err_tx_unbind:
 	queue->tx_irq = 0;
 err_unmap:
 	xenvif_unmap_frontend_rings(queue);
+	netif_napi_del(&queue->napi);
 err:
 	module_put(THIS_MODULE);
 	return err;
@@ -661,6 +670,8 @@ void xenvif_disconnect(struct xenvif *vif)
 
 		xenvif_unmap_frontend_rings(queue);
 	}
+
+	xenvif_mcast_addr_list_free(vif);
 }
 
 /* Reverse the relevant parts of xenvif_init_queue().
@@ -674,22 +685,16 @@ void xenvif_deinit_queue(struct xenvif_queue *queue)
 
 void xenvif_free(struct xenvif *vif)
 {
-	struct xenvif_queue *queue = NULL;
+	struct xenvif_queue *queues = vif->queues;
 	unsigned int num_queues = vif->num_queues;
 	unsigned int queue_index;
 
 	unregister_netdev(vif->dev);
-
-	for (queue_index = 0; queue_index < num_queues; ++queue_index) {
-		queue = &vif->queues[queue_index];
-		xenvif_deinit_queue(queue);
-	}
-
-	vfree(vif->queues);
-	vif->queues = NULL;
-	vif->num_queues = 0;
-
 	free_netdev(vif->dev);
+
+	for (queue_index = 0; queue_index < num_queues; ++queue_index)
+		xenvif_deinit_queue(&queues[queue_index]);
+	vfree(queues);
 
 	module_put(THIS_MODULE);
 }

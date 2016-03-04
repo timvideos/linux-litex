@@ -38,17 +38,17 @@ int batadv_originator_init(struct batadv_priv *bat_priv);
 void batadv_originator_free(struct batadv_priv *bat_priv);
 void batadv_purge_orig_ref(struct batadv_priv *bat_priv);
 void batadv_orig_node_free_ref(struct batadv_orig_node *orig_node);
-void batadv_orig_node_free_ref_now(struct batadv_orig_node *orig_node);
 struct batadv_orig_node *batadv_orig_node_new(struct batadv_priv *bat_priv,
-					      const uint8_t *addr);
+					      const u8 *addr);
+struct batadv_hardif_neigh_node *
+batadv_hardif_neigh_get(const struct batadv_hard_iface *hard_iface,
+			const u8 *neigh_addr);
+void
+batadv_hardif_neigh_free_ref(struct batadv_hardif_neigh_node *hardif_neigh);
 struct batadv_neigh_node *
-batadv_neigh_node_get(const struct batadv_orig_node *orig_node,
-		      const struct batadv_hard_iface *hard_iface,
-		      const uint8_t *addr);
-struct batadv_neigh_node *
-batadv_neigh_node_new(struct batadv_hard_iface *hard_iface,
-		      const uint8_t *neigh_addr,
-		      struct batadv_orig_node *orig_node);
+batadv_neigh_node_new(struct batadv_orig_node *orig_node,
+		      struct batadv_hard_iface *hard_iface,
+		      const u8 *neigh_addr);
 void batadv_neigh_node_free_ref(struct batadv_neigh_node *neigh_node);
 struct batadv_neigh_node *
 batadv_orig_router_get(struct batadv_orig_node *orig_node,
@@ -60,6 +60,8 @@ struct batadv_neigh_ifinfo *
 batadv_neigh_ifinfo_get(struct batadv_neigh_node *neigh,
 			struct batadv_hard_iface *if_outgoing);
 void batadv_neigh_ifinfo_free_ref(struct batadv_neigh_ifinfo *neigh_ifinfo);
+
+int batadv_hardif_neigh_seq_print_text(struct seq_file *seq, void *offset);
 
 struct batadv_orig_ifinfo *
 batadv_orig_ifinfo_get(struct batadv_orig_node *orig_node,
@@ -86,9 +88,9 @@ void batadv_orig_node_vlan_free_ref(struct batadv_orig_node_vlan *orig_vlan);
 /* hashfunction to choose an entry in a hash table of given size
  * hash algorithm from http://en.wikipedia.org/wiki/Hash_table
  */
-static inline uint32_t batadv_choose_orig(const void *data, uint32_t size)
+static inline u32 batadv_choose_orig(const void *data, u32 size)
 {
-	uint32_t hash = 0;
+	u32 hash = 0;
 
 	hash = jhash(data, ETH_ALEN, hash);
 	return hash % size;

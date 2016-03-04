@@ -560,7 +560,7 @@ static int liquidio_resume(struct pci_dev *pdev)
 #endif
 
 /* For PCI-E Advanced Error Recovery (AER) Interface */
-static struct pci_error_handlers liquidio_err_handler = {
+static const struct pci_error_handlers liquidio_err_handler = {
 	.error_detected = liquidio_pcie_error_detected,
 	.mmio_enabled	= liquidio_pcie_mmio_enabled,
 	.slot_reset	= liquidio_pcie_slot_reset,
@@ -818,10 +818,9 @@ static int setup_glist(struct lio *lio)
 	INIT_LIST_HEAD(&lio->glist);
 
 	for (i = 0; i < lio->tx_qsize; i++) {
-		g = kmalloc(sizeof(*g), GFP_KERNEL);
+		g = kzalloc(sizeof(*g), GFP_KERNEL);
 		if (!g)
 			break;
-		memset(g, 0, sizeof(struct octnic_gather));
 
 		g->sg_size =
 			((ROUNDUP4(OCTNIC_MAX_SG) >> 2) * OCT_SG_ENTRY_SIZE);
@@ -1527,7 +1526,6 @@ static int liquidio_ptp_gettime(struct ptp_clock_info *ptp,
 				struct timespec64 *ts)
 {
 	u64 ns;
-	u32 remainder;
 	unsigned long flags;
 	struct lio *lio = container_of(ptp, struct lio, ptp_info);
 	struct octeon_device *oct = (struct octeon_device *)lio->oct_dev;
@@ -1537,8 +1535,7 @@ static int liquidio_ptp_gettime(struct ptp_clock_info *ptp,
 	ns += lio->ptp_adjust;
 	spin_unlock_irqrestore(&lio->ptp_lock, flags);
 
-	ts->tv_sec = div_u64_rem(ns, 1000000000ULL, &remainder);
-	ts->tv_nsec = remainder;
+	*ts = ns_to_timespec64(ns);
 
 	return 0;
 }
@@ -1686,7 +1683,7 @@ static int octeon_setup_droq(struct octeon_device *oct, int q_no, int num_descs,
 	dev_dbg(&oct->pci_dev->dev, "Creating Droq: %d\n", q_no);
 	/* droq creation and local register settings. */
 	ret_val = octeon_create_droq(oct, q_no, num_descs, desc_size, app_ctx);
-	if (ret_val == -1)
+	if (ret_val < 0)
 		return ret_val;
 
 	if (ret_val == 1) {
@@ -2527,7 +2524,7 @@ static void handle_timestamp(struct octeon_device *oct,
 
 	octeon_swap_8B_data(&resp->timestamp, 1);
 
-	if (unlikely((skb_shinfo(skb)->tx_flags | SKBTX_IN_PROGRESS) != 0)) {
+	if (unlikely((skb_shinfo(skb)->tx_flags & SKBTX_IN_PROGRESS) != 0)) {
 		struct skb_shared_hwtstamps ts;
 		u64 ns = resp->timestamp;
 

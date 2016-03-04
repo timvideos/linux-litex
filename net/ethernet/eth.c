@@ -52,6 +52,8 @@
 #include <linux/errno.h>
 #include <linux/init.h>
 #include <linux/if_ether.h>
+#include <linux/of_net.h>
+#include <linux/pci.h>
 #include <net/dst.h>
 #include <net/arp.h>
 #include <net/sock.h>
@@ -114,7 +116,7 @@ int eth_header(struct sk_buff *skb, struct net_device *dev,
 EXPORT_SYMBOL(eth_header);
 
 /**
- * eth_get_headlen - determine the the length of header for an ethernet frame
+ * eth_get_headlen - determine the length of header for an ethernet frame
  * @data: pointer to start of frame
  * @len: total length of frame
  *
@@ -127,12 +129,12 @@ u32 eth_get_headlen(void *data, unsigned int len)
 	struct flow_keys keys;
 
 	/* this should never happen, but better safe than sorry */
-	if (len < sizeof(*eth))
+	if (unlikely(len < sizeof(*eth)))
 		return len;
 
 	/* parse any remaining L2/L3 headers, check for L4 */
 	if (!skb_flow_dissect_flow_keys_buf(&keys, data, eth->h_proto,
-					    sizeof(*eth), len))
+					    sizeof(*eth), len, 0))
 		return max_t(u32, keys.control.thoff, sizeof(*eth));
 
 	/* parse for any L4 headers */
@@ -485,3 +487,32 @@ static int __init eth_offload_init(void)
 }
 
 fs_initcall(eth_offload_init);
+
+unsigned char * __weak arch_get_platform_mac_address(void)
+{
+	return NULL;
+}
+
+int eth_platform_get_mac_address(struct device *dev, u8 *mac_addr)
+{
+	const unsigned char *addr;
+	struct device_node *dp;
+
+	if (dev_is_pci(dev))
+		dp = pci_device_to_OF_node(to_pci_dev(dev));
+	else
+		dp = dev->of_node;
+
+	addr = NULL;
+	if (dp)
+		addr = of_get_mac_address(dp);
+	if (!addr)
+		addr = arch_get_platform_mac_address();
+
+	if (!addr)
+		return -ENODEV;
+
+	ether_addr_copy(mac_addr, addr);
+	return 0;
+}
+EXPORT_SYMBOL(eth_platform_get_mac_address);

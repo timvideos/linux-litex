@@ -27,7 +27,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Intel Corporation.
+ * Copyright (c) 2011, 2015, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -42,13 +42,6 @@
 
 #include "curproc.h"
 
-static inline int __is_po2(unsigned long long val)
-{
-	return !(val & (val - 1));
-}
-
-#define IS_PO2(val) __is_po2((unsigned long long)(val))
-
 #define LOWEST_BIT_SET(x)       ((x) & ~((x) - 1))
 
 /*
@@ -61,9 +54,6 @@ static inline int __is_po2(unsigned long long val)
 #define LUSTRE_SRV_LNET_PID      LUSTRE_LNET_PID
 
 #include <linux/list.h>
-
-int libcfs_arch_init(void);
-void libcfs_arch_cleanup(void);
 
 /* need both kernel and user-land acceptor */
 #define LNET_ACCEPTOR_MIN_RESERVED_PORT    512
@@ -134,7 +124,7 @@ void cfs_get_random_bytes(void *buf, int size);
 /* container_of depends on "likely" which is defined in libcfs_private.h */
 static inline void *__container_of(void *ptr, unsigned long shift)
 {
-	if (unlikely(IS_ERR(ptr) || ptr == NULL))
+	if (IS_ERR_OR_NULL(ptr))
 		return ptr;
 	return (char *)ptr - shift;
 }
@@ -147,5 +137,24 @@ static inline void *__container_of(void *ptr, unsigned long shift)
 void *libcfs_kvzalloc(size_t size, gfp_t flags);
 void *libcfs_kvzalloc_cpt(struct cfs_cpt_table *cptab, int cpt, size_t size,
 			  gfp_t flags);
+
+extern struct miscdevice libcfs_dev;
+/**
+ * The path of debug log dump upcall script.
+ */
+extern char lnet_upcall[1024];
+extern char lnet_debug_log_upcall[1024];
+
+extern struct cfs_psdev_ops libcfs_psdev_ops;
+
+extern struct cfs_wi_sched *cfs_sched_rehash;
+
+struct lnet_debugfs_symlink_def {
+	char *name;
+	char *target;
+};
+
+void lustre_insert_debugfs(struct ctl_table *table,
+			   const struct lnet_debugfs_symlink_def *symlinks);
 
 #endif /* _LIBCFS_H */

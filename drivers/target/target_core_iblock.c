@@ -105,6 +105,8 @@ static int iblock_configure_device(struct se_device *dev)
 	mode = FMODE_READ|FMODE_EXCL;
 	if (!ib_dev->ibd_readonly)
 		mode |= FMODE_WRITE;
+	else
+		dev->dev_flags |= DF_READ_ONLY;
 
 	bd = blkdev_get_by_path(ib_dev->ibd_udev_path, mode, ib_dev);
 	if (IS_ERR(bd)) {
@@ -119,27 +121,11 @@ static int iblock_configure_device(struct se_device *dev)
 	dev->dev_attrib.hw_max_sectors = queue_max_hw_sectors(q);
 	dev->dev_attrib.hw_queue_depth = q->nr_requests;
 
-	/*
-	 * Check if the underlying struct block_device request_queue supports
-	 * the QUEUE_FLAG_DISCARD bit for UNMAP/WRITE_SAME in SCSI + TRIM
-	 * in ATA and we need to set TPE=1
-	 */
-	if (blk_queue_discard(q)) {
-		dev->dev_attrib.max_unmap_lba_count =
-				q->limits.max_discard_sectors;
-
-		/*
-		 * Currently hardcoded to 1 in Linux/SCSI code..
-		 */
-		dev->dev_attrib.max_unmap_block_desc_count = 1;
-		dev->dev_attrib.unmap_granularity =
-				q->limits.discard_granularity >> 9;
-		dev->dev_attrib.unmap_granularity_alignment =
-				q->limits.discard_alignment;
-
+	if (target_configure_unmap_from_queue(&dev->dev_attrib, q,
+					      dev->dev_attrib.hw_block_size))
 		pr_debug("IBLOCK: BLOCK Discard support available,"
-				" disabled by default\n");
-	}
+			 " disabled by default\n");
+
 	/*
 	 * Enable write same emulation for IBLOCK and use 0xFFFF as
 	 * the smaller WRITE_SAME(10) only has a two-byte block count.
@@ -153,17 +139,17 @@ static int iblock_configure_device(struct se_device *dev)
 	if (bi) {
 		struct bio_set *bs = ib_dev->ibd_bio_set;
 
-		if (!strcmp(bi->name, "T10-DIF-TYPE3-IP") ||
-		    !strcmp(bi->name, "T10-DIF-TYPE1-IP")) {
+		if (!strcmp(bi->profile->name, "T10-DIF-TYPE3-IP") ||
+		    !strcmp(bi->profile->name, "T10-DIF-TYPE1-IP")) {
 			pr_err("IBLOCK export of blk_integrity: %s not"
-			       " supported\n", bi->name);
+			       " supported\n", bi->profile->name);
 			ret = -ENOSYS;
 			goto out_blkdev_put;
 		}
 
-		if (!strcmp(bi->name, "T10-DIF-TYPE3-CRC")) {
+		if (!strcmp(bi->profile->name, "T10-DIF-TYPE3-CRC")) {
 			dev->dev_attrib.pi_prot_type = TARGET_DIF_TYPE3_PROT;
-		} else if (!strcmp(bi->name, "T10-DIF-TYPE1-CRC")) {
+		} else if (!strcmp(bi->profile->name, "T10-DIF-TYPE1-CRC")) {
 			dev->dev_attrib.pi_prot_type = TARGET_DIF_TYPE1_PROT;
 		}
 
@@ -306,20 +292,13 @@ static void iblock_complete_cmd(struct se_cmd *cmd)
 	kfree(ibr);
 }
 
-static void iblock_bio_done(struct bio *bio, int err)
+static void iblock_bio_done(struct bio *bio)
 {
 	struct se_cmd *cmd = bio->bi_private;
 	struct iblock_req *ibr = cmd->priv;
 
-	/*
-	 * Set -EIO if !BIO_UPTODATE and the passed is still err=0
-	 */
-	if (!test_bit(BIO_UPTODATE, &bio->bi_flags) && !err)
-		err = -EIO;
-
-	if (err != 0) {
-		pr_err("test_bit(BIO_UPTODATE) failed for bio: %p,"
-			" err: %d\n", bio, err);
+	if (bio->bi_error) {
+		pr_err("bio error: %p,  err: %d\n", bio, bio->bi_error);
 		/*
 		 * Bump the ib_bio_err_cnt and release bio.
 		 */
@@ -370,15 +349,15 @@ static void iblock_submit_bios(struct bio_list *list, int rw)
 	blk_finish_plug(&plug);
 }
 
-static void iblock_end_io_flush(struct bio *bio, int err)
+static void iblock_end_io_flush(struct bio *bio)
 {
 	struct se_cmd *cmd = bio->bi_private;
 
-	if (err)
-		pr_err("IBLOCK: cache flush failed: %d\n", err);
+	if (bio->bi_error)
+		pr_err("IBLOCK: cache flush failed: %d\n", bio->bi_error);
 
 	if (cmd) {
-		if (err)
+		if (bio->bi_error)
 			target_complete_cmd(cmd, SAM_STAT_CHECK_CONDITION);
 		else
 			target_complete_cmd(cmd, SAM_STAT_GOOD);
@@ -418,9 +397,13 @@ static sense_reason_t
 iblock_execute_unmap(struct se_cmd *cmd, sector_t lba, sector_t nolb)
 {
 	struct block_device *bdev = IBLOCK_DEV(cmd->se_dev)->ibd_bd;
+	struct se_device *dev = cmd->se_dev;
 	int ret;
 
-	ret = blkdev_issue_discard(bdev, lba, nolb, GFP_KERNEL, 0);
+	ret = blkdev_issue_discard(bdev,
+				   target_to_linux_sector(dev, lba),
+				   target_to_linux_sector(dev,  nolb),
+				   GFP_KERNEL, 0);
 	if (ret < 0) {
 		pr_err("blkdev_issue_discard() failed: %d\n", ret);
 		return TCM_LOGICAL_UNIT_COMMUNICATION_FAILURE;
@@ -436,8 +419,10 @@ iblock_execute_write_same(struct se_cmd *cmd)
 	struct scatterlist *sg;
 	struct bio *bio;
 	struct bio_list list;
-	sector_t block_lba = cmd->t_task_lba;
-	sector_t sectors = sbc_get_write_same_sectors(cmd);
+	struct se_device *dev = cmd->se_dev;
+	sector_t block_lba = target_to_linux_sector(dev, cmd->t_task_lba);
+	sector_t sectors = target_to_linux_sector(dev,
+					sbc_get_write_same_sectors(cmd));
 
 	if (cmd->prot_op) {
 		pr_err("WRITE_SAME: Protection information with IBLOCK"
@@ -618,9 +603,9 @@ iblock_alloc_bip(struct se_cmd *cmd, struct bio *bio)
 	}
 
 	bip = bio_integrity_alloc(bio, GFP_NOIO, cmd->t_prot_nents);
-	if (!bip) {
+	if (IS_ERR(bip)) {
 		pr_err("Unable to allocate bio_integrity_payload\n");
-		return -ENOMEM;
+		return PTR_ERR(bip);
 	}
 
 	bip->bip_iter.bi_size = (cmd->data_length / dev->dev_attrib.block_size) *
@@ -651,12 +636,12 @@ iblock_execute_rw(struct se_cmd *cmd, struct scatterlist *sgl, u32 sgl_nents,
 		  enum dma_data_direction data_direction)
 {
 	struct se_device *dev = cmd->se_dev;
+	sector_t block_lba = target_to_linux_sector(dev, cmd->t_task_lba);
 	struct iblock_req *ibr;
 	struct bio *bio, *bio_start;
 	struct bio_list list;
 	struct scatterlist *sg;
 	u32 sg_num = sgl_nents;
-	sector_t block_lba;
 	unsigned bio_cnt;
 	int rw = 0;
 	int i;
@@ -680,24 +665,6 @@ iblock_execute_rw(struct se_cmd *cmd, struct scatterlist *sgl, u32 sgl_nents,
 		}
 	} else {
 		rw = READ;
-	}
-
-	/*
-	 * Convert the blocksize advertised to the initiator to the 512 byte
-	 * units unconditionally used by the Linux block layer.
-	 */
-	if (dev->dev_attrib.block_size == 4096)
-		block_lba = (cmd->t_task_lba << 3);
-	else if (dev->dev_attrib.block_size == 2048)
-		block_lba = (cmd->t_task_lba << 2);
-	else if (dev->dev_attrib.block_size == 1024)
-		block_lba = (cmd->t_task_lba << 1);
-	else if (dev->dev_attrib.block_size == 512)
-		block_lba = cmd->t_task_lba;
-	else {
-		pr_err("Unsupported SCSI -> BLOCK LBA conversion:"
-				" %u\n", dev->dev_attrib.block_size);
-		return TCM_LOGICAL_UNIT_COMMUNICATION_FAILURE;
 	}
 
 	ibr = kzalloc(sizeof(struct iblock_req), GFP_KERNEL);

@@ -445,13 +445,13 @@ static int cz_dpm_init(struct amdgpu_device *adev)
 	pi->gfx_pg_threshold = 500;
 	pi->caps_fps = true;
 	/* uvd */
-	pi->caps_uvd_pg = (adev->pg_flags & AMDGPU_PG_SUPPORT_UVD) ? true : false;
+	pi->caps_uvd_pg = (adev->pg_flags & AMD_PG_SUPPORT_UVD) ? true : false;
 	pi->caps_uvd_dpm = true;
 	/* vce */
-	pi->caps_vce_pg = (adev->pg_flags & AMDGPU_PG_SUPPORT_VCE) ? true : false;
+	pi->caps_vce_pg = (adev->pg_flags & AMD_PG_SUPPORT_VCE) ? true : false;
 	pi->caps_vce_dpm = true;
 	/* acp */
-	pi->caps_acp_pg = (adev->pg_flags & AMDGPU_PG_SUPPORT_ACP) ? true : false;
+	pi->caps_acp_pg = (adev->pg_flags & AMD_PG_SUPPORT_ACP) ? true : false;
 	pi->caps_acp_dpm = true;
 
 	pi->caps_stable_power_state = false;
@@ -596,6 +596,12 @@ static int cz_dpm_late_init(void *handle)
 	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 
 	if (amdgpu_dpm) {
+		int ret;
+		/* init the sysfs and debugfs files late */
+		ret = amdgpu_pm_sysfs_init(adev);
+		if (ret)
+			return ret;
+
 		/* powerdown unused blocks for now */
 		cz_dpm_powergate_uvd(adev, true);
 		cz_dpm_powergate_vce(adev, true);
@@ -631,10 +637,6 @@ static int cz_dpm_sw_init(void *handle)
 	adev->pm.dpm.current_ps = adev->pm.dpm.requested_ps = adev->pm.dpm.boot_ps;
 	if (amdgpu_dpm == 1)
 		amdgpu_pm_print_power_states(adev);
-
-	ret = amdgpu_pm_sysfs_init(adev);
-	if (ret)
-		goto dpm_init_failed;
 
 	mutex_unlock(&adev->pm.mutex);
 	DRM_INFO("amdgpu: dpm initialized\n");
@@ -1076,6 +1078,37 @@ static uint32_t cz_get_eclk_level(struct amdgpu_device *adev,
 	return i;
 }
 
+static uint32_t cz_get_uvd_level(struct amdgpu_device *adev,
+				 uint32_t clock, uint16_t msg)
+{
+	int i = 0;
+	struct amdgpu_uvd_clock_voltage_dependency_table *table =
+		&adev->pm.dpm.dyn_state.uvd_clock_voltage_dependency_table;
+
+	switch (msg) {
+	case PPSMC_MSG_SetUvdSoftMin:
+	case PPSMC_MSG_SetUvdHardMin:
+		for (i = 0; i < table->count; i++)
+			if (clock <= table->entries[i].vclk)
+				break;
+		if (i == table->count)
+			i = table->count - 1;
+		break;
+	case PPSMC_MSG_SetUvdSoftMax:
+	case PPSMC_MSG_SetUvdHardMax:
+		for (i = table->count - 1; i >= 0; i--)
+			if (clock >= table->entries[i].vclk)
+				break;
+		if (i < 0)
+			i = 0;
+		break;
+	default:
+		break;
+	}
+
+	return i;
+}
+
 static int cz_program_bootup_state(struct amdgpu_device *adev)
 {
 	struct cz_power_info *pi = cz_get_pi(adev);
@@ -1262,6 +1295,7 @@ static void cz_apply_state_adjust_rules(struct amdgpu_device *adev,
 
 static int cz_dpm_enable(struct amdgpu_device *adev)
 {
+	const char *chip_name;
 	int ret = 0;
 
 	/* renable will hang up SMU, so check first */
@@ -1270,21 +1304,33 @@ static int cz_dpm_enable(struct amdgpu_device *adev)
 
 	cz_program_voting_clients(adev);
 
+	switch (adev->asic_type) {
+	case CHIP_CARRIZO:
+		chip_name = "carrizo";
+		break;
+	case CHIP_STONEY:
+		chip_name = "stoney";
+		break;
+	default:
+		BUG();
+	}
+
+
 	ret = cz_start_dpm(adev);
 	if (ret) {
-		DRM_ERROR("Carrizo DPM enable failed\n");
+		DRM_ERROR("%s DPM enable failed\n", chip_name);
 		return -EINVAL;
 	}
 
 	ret = cz_program_bootup_state(adev);
 	if (ret) {
-		DRM_ERROR("Carrizo bootup state program failed\n");
+		DRM_ERROR("%s bootup state program failed\n", chip_name);
 		return -EINVAL;
 	}
 
 	ret = cz_enable_didt(adev, true);
 	if (ret) {
-		DRM_ERROR("Carrizo enable di/dt failed\n");
+		DRM_ERROR("%s enable di/dt failed\n", chip_name);
 		return -EINVAL;
 	}
 
@@ -1351,7 +1397,7 @@ static int cz_dpm_disable(struct amdgpu_device *adev)
 
 	ret = cz_enable_didt(adev, false);
 	if (ret) {
-		DRM_ERROR("Carrizo disable di/dt failed\n");
+		DRM_ERROR("disable di/dt failed\n");
 		return -EINVAL;
 	}
 
@@ -1596,9 +1642,9 @@ static int cz_dpm_update_low_memory_pstate(struct amdgpu_device *adev)
 
 	if (pi->sys_info.nb_dpm_enable) {
 		if (ps->force_high)
-			cz_dpm_nbdpm_lm_pstate_enable(adev, true);
-		else
 			cz_dpm_nbdpm_lm_pstate_enable(adev, false);
+		else
+			cz_dpm_nbdpm_lm_pstate_enable(adev, true);
 	}
 
 	return ret;
@@ -1724,6 +1770,200 @@ static int cz_dpm_unforce_dpm_levels(struct amdgpu_device *adev)
 	return 0;
 }
 
+static int cz_dpm_uvd_force_highest(struct amdgpu_device *adev)
+{
+	struct cz_power_info *pi = cz_get_pi(adev);
+	int ret = 0;
+
+	if (pi->uvd_dpm.soft_min_clk != pi->uvd_dpm.soft_max_clk) {
+		pi->uvd_dpm.soft_min_clk =
+			pi->uvd_dpm.soft_max_clk;
+		ret = cz_send_msg_to_smc_with_parameter(adev,
+				PPSMC_MSG_SetUvdSoftMin,
+				cz_get_uvd_level(adev,
+					pi->uvd_dpm.soft_min_clk,
+					PPSMC_MSG_SetUvdSoftMin));
+		if (ret)
+			return ret;
+	}
+
+	return ret;
+}
+
+static int cz_dpm_uvd_force_lowest(struct amdgpu_device *adev)
+{
+	struct cz_power_info *pi = cz_get_pi(adev);
+	int ret = 0;
+
+	if (pi->uvd_dpm.soft_max_clk != pi->uvd_dpm.soft_min_clk) {
+		pi->uvd_dpm.soft_max_clk = pi->uvd_dpm.soft_min_clk;
+		ret = cz_send_msg_to_smc_with_parameter(adev,
+				PPSMC_MSG_SetUvdSoftMax,
+				cz_get_uvd_level(adev,
+					pi->uvd_dpm.soft_max_clk,
+					PPSMC_MSG_SetUvdSoftMax));
+		if (ret)
+			return ret;
+	}
+
+	return ret;
+}
+
+static uint32_t cz_dpm_get_max_uvd_level(struct amdgpu_device *adev)
+{
+	struct cz_power_info *pi = cz_get_pi(adev);
+
+	if (!pi->max_uvd_level) {
+		cz_send_msg_to_smc(adev, PPSMC_MSG_GetMaxUvdLevel);
+		pi->max_uvd_level = cz_get_argument(adev) + 1;
+	}
+
+	if (pi->max_uvd_level > CZ_MAX_HARDWARE_POWERLEVELS) {
+		DRM_ERROR("Invalid max uvd level!\n");
+		return -EINVAL;
+	}
+
+	return pi->max_uvd_level;
+}
+
+static int cz_dpm_unforce_uvd_dpm_levels(struct amdgpu_device *adev)
+{
+	struct cz_power_info *pi = cz_get_pi(adev);
+	struct amdgpu_uvd_clock_voltage_dependency_table *dep_table =
+		&adev->pm.dpm.dyn_state.uvd_clock_voltage_dependency_table;
+	uint32_t level = 0;
+	int ret = 0;
+
+	pi->uvd_dpm.soft_min_clk = dep_table->entries[0].vclk;
+	level = cz_dpm_get_max_uvd_level(adev) - 1;
+	if (level < dep_table->count)
+		pi->uvd_dpm.soft_max_clk = dep_table->entries[level].vclk;
+	else
+		pi->uvd_dpm.soft_max_clk =
+			dep_table->entries[dep_table->count - 1].vclk;
+
+	/* get min/max sclk soft value
+	 * notify SMU to execute */
+	ret = cz_send_msg_to_smc_with_parameter(adev,
+				PPSMC_MSG_SetUvdSoftMin,
+				cz_get_uvd_level(adev,
+					pi->uvd_dpm.soft_min_clk,
+					PPSMC_MSG_SetUvdSoftMin));
+	if (ret)
+		return ret;
+
+	ret = cz_send_msg_to_smc_with_parameter(adev,
+				PPSMC_MSG_SetUvdSoftMax,
+				cz_get_uvd_level(adev,
+					pi->uvd_dpm.soft_max_clk,
+					PPSMC_MSG_SetUvdSoftMax));
+	if (ret)
+		return ret;
+
+	DRM_DEBUG("DPM uvd unforce state min=%d, max=%d.\n",
+		  pi->uvd_dpm.soft_min_clk,
+		  pi->uvd_dpm.soft_max_clk);
+
+	return 0;
+}
+
+static int cz_dpm_vce_force_highest(struct amdgpu_device *adev)
+{
+	struct cz_power_info *pi = cz_get_pi(adev);
+	int ret = 0;
+
+	if (pi->vce_dpm.soft_min_clk != pi->vce_dpm.soft_max_clk) {
+		pi->vce_dpm.soft_min_clk =
+			pi->vce_dpm.soft_max_clk;
+		ret = cz_send_msg_to_smc_with_parameter(adev,
+				PPSMC_MSG_SetEclkSoftMin,
+				cz_get_eclk_level(adev,
+					pi->vce_dpm.soft_min_clk,
+					PPSMC_MSG_SetEclkSoftMin));
+		if (ret)
+			return ret;
+	}
+
+	return ret;
+}
+
+static int cz_dpm_vce_force_lowest(struct amdgpu_device *adev)
+{
+	struct cz_power_info *pi = cz_get_pi(adev);
+	int ret = 0;
+
+	if (pi->vce_dpm.soft_max_clk != pi->vce_dpm.soft_min_clk) {
+		pi->vce_dpm.soft_max_clk = pi->vce_dpm.soft_min_clk;
+		ret = cz_send_msg_to_smc_with_parameter(adev,
+				PPSMC_MSG_SetEclkSoftMax,
+				cz_get_uvd_level(adev,
+					pi->vce_dpm.soft_max_clk,
+					PPSMC_MSG_SetEclkSoftMax));
+		if (ret)
+			return ret;
+	}
+
+	return ret;
+}
+
+static uint32_t cz_dpm_get_max_vce_level(struct amdgpu_device *adev)
+{
+	struct cz_power_info *pi = cz_get_pi(adev);
+
+	if (!pi->max_vce_level) {
+		cz_send_msg_to_smc(adev, PPSMC_MSG_GetMaxEclkLevel);
+		pi->max_vce_level = cz_get_argument(adev) + 1;
+	}
+
+	if (pi->max_vce_level > CZ_MAX_HARDWARE_POWERLEVELS) {
+		DRM_ERROR("Invalid max vce level!\n");
+		return -EINVAL;
+	}
+
+	return pi->max_vce_level;
+}
+
+static int cz_dpm_unforce_vce_dpm_levels(struct amdgpu_device *adev)
+{
+	struct cz_power_info *pi = cz_get_pi(adev);
+	struct amdgpu_vce_clock_voltage_dependency_table *dep_table =
+		&adev->pm.dpm.dyn_state.vce_clock_voltage_dependency_table;
+	uint32_t level = 0;
+	int ret = 0;
+
+	pi->vce_dpm.soft_min_clk = dep_table->entries[0].ecclk;
+	level = cz_dpm_get_max_vce_level(adev) - 1;
+	if (level < dep_table->count)
+		pi->vce_dpm.soft_max_clk = dep_table->entries[level].ecclk;
+	else
+		pi->vce_dpm.soft_max_clk =
+			dep_table->entries[dep_table->count - 1].ecclk;
+
+	/* get min/max sclk soft value
+	 * notify SMU to execute */
+	ret = cz_send_msg_to_smc_with_parameter(adev,
+				PPSMC_MSG_SetEclkSoftMin,
+				cz_get_eclk_level(adev,
+					pi->vce_dpm.soft_min_clk,
+					PPSMC_MSG_SetEclkSoftMin));
+	if (ret)
+		return ret;
+
+	ret = cz_send_msg_to_smc_with_parameter(adev,
+				PPSMC_MSG_SetEclkSoftMax,
+				cz_get_eclk_level(adev,
+					pi->vce_dpm.soft_max_clk,
+					PPSMC_MSG_SetEclkSoftMax));
+	if (ret)
+		return ret;
+
+	DRM_DEBUG("DPM vce unforce state min=%d, max=%d.\n",
+		  pi->vce_dpm.soft_min_clk,
+		  pi->vce_dpm.soft_max_clk);
+
+	return 0;
+}
+
 static int cz_dpm_force_dpm_level(struct amdgpu_device *adev,
 				  enum amdgpu_dpm_forced_level level)
 {
@@ -1731,23 +1971,68 @@ static int cz_dpm_force_dpm_level(struct amdgpu_device *adev,
 
 	switch (level) {
 	case AMDGPU_DPM_FORCED_LEVEL_HIGH:
+		/* sclk */
 		ret = cz_dpm_unforce_dpm_levels(adev);
 		if (ret)
 			return ret;
 		ret = cz_dpm_force_highest(adev);
 		if (ret)
 			return ret;
+
+		/* uvd */
+		ret = cz_dpm_unforce_uvd_dpm_levels(adev);
+		if (ret)
+			return ret;
+		ret = cz_dpm_uvd_force_highest(adev);
+		if (ret)
+			return ret;
+
+		/* vce */
+		ret = cz_dpm_unforce_vce_dpm_levels(adev);
+		if (ret)
+			return ret;
+		ret = cz_dpm_vce_force_highest(adev);
+		if (ret)
+			return ret;
 		break;
 	case AMDGPU_DPM_FORCED_LEVEL_LOW:
+		/* sclk */
 		ret = cz_dpm_unforce_dpm_levels(adev);
 		if (ret)
 			return ret;
 		ret = cz_dpm_force_lowest(adev);
 		if (ret)
 			return ret;
+
+		/* uvd */
+		ret = cz_dpm_unforce_uvd_dpm_levels(adev);
+		if (ret)
+			return ret;
+		ret = cz_dpm_uvd_force_lowest(adev);
+		if (ret)
+			return ret;
+
+		/* vce */
+		ret = cz_dpm_unforce_vce_dpm_levels(adev);
+		if (ret)
+			return ret;
+		ret = cz_dpm_vce_force_lowest(adev);
+		if (ret)
+			return ret;
 		break;
 	case AMDGPU_DPM_FORCED_LEVEL_AUTO:
+		/* sclk */
 		ret = cz_dpm_unforce_dpm_levels(adev);
+		if (ret)
+			return ret;
+
+		/* uvd */
+		ret = cz_dpm_unforce_uvd_dpm_levels(adev);
+		if (ret)
+			return ret;
+
+		/* vce */
+		ret = cz_dpm_unforce_vce_dpm_levels(adev);
 		if (ret)
 			return ret;
 		break;
@@ -1890,7 +2175,8 @@ static int cz_update_vce_dpm(struct amdgpu_device *adev)
 		pi->vce_dpm.hard_min_clk = table->entries[table->count-1].ecclk;
 
 	} else { /* non-stable p-state cases. without vce.Arbiter.EcclkHardMin */
-		pi->vce_dpm.hard_min_clk = table->entries[0].ecclk;
+		/* leave it as set by user */
+		/*pi->vce_dpm.hard_min_clk = table->entries[0].ecclk;*/
 	}
 
 	cz_send_msg_to_smc_with_parameter(adev,

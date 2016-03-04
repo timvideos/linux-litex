@@ -18,14 +18,6 @@
 #include "q_struct.h"
 #include "nicvf_queues.h"
 
-struct rbuf_info {
-	struct page *page;
-	void	*data;
-	u64	offset;
-};
-
-#define GET_RBUF_INFO(x) ((struct rbuf_info *)(x - NICVF_RCV_BUF_ALIGN_BYTES))
-
 /* Poll a register for a specific value */
 static int nicvf_poll_reg(struct nicvf *nic, int qidx,
 			  u64 reg, int bit_pos, int bits, int val)
@@ -86,8 +78,6 @@ static void nicvf_free_q_desc_mem(struct nicvf *nic, struct q_desc_mem *dmem)
 static inline int nicvf_alloc_rcv_buffer(struct nicvf *nic, gfp_t gfp,
 					 u32 buf_len, u64 **rbuf)
 {
-	u64 data;
-	struct rbuf_info *rinfo;
 	int order = get_order(buf_len);
 
 	/* Check if request can be accomodated in previous allocated page */
@@ -113,46 +103,28 @@ static inline int nicvf_alloc_rcv_buffer(struct nicvf *nic, gfp_t gfp,
 		nic->rb_page_offset = 0;
 	}
 
-	data = (u64)page_address(nic->rb_page) + nic->rb_page_offset;
+	*rbuf = (u64 *)((u64)page_address(nic->rb_page) + nic->rb_page_offset);
 
-	/* Align buffer addr to cache line i.e 128 bytes */
-	rinfo = (struct rbuf_info *)(data + NICVF_RCV_BUF_ALIGN_LEN(data));
-	/* Save page address for reference updation */
-	rinfo->page = nic->rb_page;
-	/* Store start address for later retrieval */
-	rinfo->data = (void *)data;
-	/* Store alignment offset */
-	rinfo->offset = NICVF_RCV_BUF_ALIGN_LEN(data);
-
-	data += rinfo->offset;
-
-	/* Give next aligned address to hw for DMA */
-	*rbuf = (u64 *)(data + NICVF_RCV_BUF_ALIGN_BYTES);
 	return 0;
 }
 
-/* Retrieve actual buffer start address and build skb for received packet */
+/* Build skb around receive buffer */
 static struct sk_buff *nicvf_rb_ptr_to_skb(struct nicvf *nic,
 					   u64 rb_ptr, int len)
 {
+	void *data;
 	struct sk_buff *skb;
-	struct rbuf_info *rinfo;
 
-	rb_ptr = (u64)phys_to_virt(rb_ptr);
-	/* Get buffer start address and alignment offset */
-	rinfo = GET_RBUF_INFO(rb_ptr);
+	data = phys_to_virt(rb_ptr);
 
 	/* Now build an skb to give to stack */
-	skb = build_skb(rinfo->data, RCV_FRAG_LEN);
+	skb = build_skb(data, RCV_FRAG_LEN);
 	if (!skb) {
-		put_page(rinfo->page);
+		put_page(virt_to_page(data));
 		return NULL;
 	}
 
-	/* Set correct skb->data */
-	skb_reserve(skb, rinfo->offset + NICVF_RCV_BUF_ALIGN_BYTES);
-
-	prefetch((void *)rb_ptr);
+	prefetch(skb->data);
 	return skb;
 }
 
@@ -196,7 +168,6 @@ static void nicvf_free_rbdr(struct nicvf *nic, struct rbdr *rbdr)
 	int head, tail;
 	u64 buf_addr;
 	struct rbdr_entry_t *desc;
-	struct rbuf_info *rinfo;
 
 	if (!rbdr)
 		return;
@@ -212,16 +183,14 @@ static void nicvf_free_rbdr(struct nicvf *nic, struct rbdr *rbdr)
 	while (head != tail) {
 		desc = GET_RBDR_DESC(rbdr, head);
 		buf_addr = desc->buf_addr << NICVF_RCV_BUF_ALIGN;
-		rinfo = GET_RBUF_INFO((u64)phys_to_virt(buf_addr));
-		put_page(rinfo->page);
+		put_page(virt_to_page(phys_to_virt(buf_addr)));
 		head++;
 		head &= (rbdr->dmem.q_len - 1);
 	}
 	/* Free SKB of tail desc */
 	desc = GET_RBDR_DESC(rbdr, tail);
 	buf_addr = desc->buf_addr << NICVF_RCV_BUF_ALIGN;
-	rinfo = GET_RBUF_INFO((u64)phys_to_virt(buf_addr));
-	put_page(rinfo->page);
+	put_page(virt_to_page(phys_to_virt(buf_addr)));
 
 	/* Free RBDR ring */
 	nicvf_free_q_desc_mem(nic, &rbdr->dmem);
@@ -330,7 +299,7 @@ static int nicvf_init_cmp_queue(struct nicvf *nic,
 		return err;
 
 	cq->desc = cq->dmem.base;
-	cq->thresh = CMP_QUEUE_CQE_THRESH;
+	cq->thresh = pass1_silicon(nic->pdev) ? 0 : CMP_QUEUE_CQE_THRESH;
 	nic->cq_coalesce_usecs = (CMP_QUEUE_TIMER_THRESH * 0.05) - 1;
 
 	return 0;
@@ -475,6 +444,27 @@ static void nicvf_reclaim_rbdr(struct nicvf *nic,
 		return;
 }
 
+void nicvf_config_vlan_stripping(struct nicvf *nic, netdev_features_t features)
+{
+	u64 rq_cfg;
+	int sqs;
+
+	rq_cfg = nicvf_queue_reg_read(nic, NIC_QSET_RQ_GEN_CFG, 0);
+
+	/* Enable first VLAN stripping */
+	if (features & NETIF_F_HW_VLAN_CTAG_RX)
+		rq_cfg |= (1ULL << 25);
+	else
+		rq_cfg &= ~(1ULL << 25);
+	nicvf_queue_reg_write(nic, NIC_QSET_RQ_GEN_CFG, 0, rq_cfg);
+
+	/* Configure Secondary Qsets, if any */
+	for (sqs = 0; sqs < nic->sqs_count; sqs++)
+		if (nic->snicvf[sqs])
+			nicvf_queue_reg_write(nic->snicvf[sqs],
+					      NIC_QSET_RQ_GEN_CFG, 0, rq_cfg);
+}
+
 /* Configures receive queue */
 static void nicvf_rcv_queue_config(struct nicvf *nic, struct queue_set *qs,
 				   int qidx, bool enable)
@@ -524,7 +514,9 @@ static void nicvf_rcv_queue_config(struct nicvf *nic, struct queue_set *qs,
 	mbx.rq.cfg = (1ULL << 62) | (RQ_CQ_DROP << 8);
 	nicvf_send_msg_to_pf(nic, &mbx);
 
-	nicvf_queue_reg_write(nic, NIC_QSET_RQ_GEN_CFG, qidx, 0x00);
+	nicvf_queue_reg_write(nic, NIC_QSET_RQ_GEN_CFG, 0, 0x00);
+	if (!nic->sqs_mode)
+		nicvf_config_vlan_stripping(nic, nic->netdev->features);
 
 	/* Enable Receive queue */
 	rq_cfg.ena = 1;
@@ -569,7 +561,7 @@ void nicvf_cmp_queue_config(struct nicvf *nic, struct queue_set *qs,
 	/* Set threshold value for interrupt generation */
 	nicvf_queue_reg_write(nic, NIC_QSET_CQ_0_7_THRESH, qidx, cq->thresh);
 	nicvf_queue_reg_write(nic, NIC_QSET_CQ_0_7_CFG2,
-			      qidx, nic->cq_coalesce_usecs);
+			      qidx, CMP_QUEUE_TIMER_THRESH);
 }
 
 /* Configures transmit queue */
@@ -598,6 +590,7 @@ static void nicvf_snd_queue_config(struct nicvf *nic, struct queue_set *qs,
 	mbx.sq.msg = NIC_MBOX_MSG_SQ_CFG;
 	mbx.sq.qs_num = qs->vnic_id;
 	mbx.sq.sq_num = qidx;
+	mbx.sq.sqs_mode = nic->sqs_mode;
 	mbx.sq.cfg = (sq->cq_qs << 3) | sq->cq_idx;
 	nicvf_send_msg_to_pf(nic, &mbx);
 
@@ -679,6 +672,7 @@ void nicvf_qset_config(struct nicvf *nic, bool enable)
 	/* Send a mailbox msg to PF to config Qset */
 	mbx.qs.msg = NIC_MBOX_MSG_QS_CFG;
 	mbx.qs.num = qs->vnic_id;
+	mbx.qs.sqs_count = nic->sqs_count;
 
 	mbx.qs.cfg = 0;
 	qs_cfg = (struct qs_cfg *)&mbx.qs.cfg;
@@ -759,6 +753,10 @@ int nicvf_set_qset_resources(struct nicvf *nic)
 	qs->rbdr_len = RCV_BUF_COUNT;
 	qs->sq_len = SND_QUEUE_LEN;
 	qs->cq_len = CMP_QUEUE_LEN;
+
+	nic->rx_queues = qs->rq_cnt;
+	nic->tx_queues = qs->sq_cnt;
+
 	return 0;
 }
 
@@ -927,7 +925,7 @@ static int nicvf_sq_subdesc_required(struct nicvf *nic, struct sk_buff *skb)
 {
 	int subdesc_cnt = MIN_SQ_DESC_PER_PKT_XMIT;
 
-	if (skb_shinfo(skb)->gso_size) {
+	if (skb_shinfo(skb)->gso_size && !nic->hw_tso) {
 		subdesc_cnt = nicvf_tso_count_subdescs(skb);
 		return subdesc_cnt;
 	}
@@ -942,7 +940,7 @@ static int nicvf_sq_subdesc_required(struct nicvf *nic, struct sk_buff *skb)
  * First subdescriptor for every send descriptor.
  */
 static inline void
-nicvf_sq_add_hdr_subdesc(struct snd_queue *sq, int qentry,
+nicvf_sq_add_hdr_subdesc(struct nicvf *nic, struct snd_queue *sq, int qentry,
 			 int subdesc_cnt, struct sk_buff *skb, int len)
 {
 	int proto;
@@ -961,9 +959,6 @@ nicvf_sq_add_hdr_subdesc(struct snd_queue *sq, int qentry,
 
 	/* Offload checksum calculation to HW */
 	if (skb->ip_summed == CHECKSUM_PARTIAL) {
-		if (skb->protocol != htons(ETH_P_IP))
-			return;
-
 		hdr->csum_l3 = 1; /* Enable IP csum calculation */
 		hdr->l3_offset = skb_network_offset(skb);
 		hdr->l4_offset = skb_transport_offset(skb);
@@ -980,6 +975,15 @@ nicvf_sq_add_hdr_subdesc(struct snd_queue *sq, int qentry,
 			hdr->csum_l4 = SEND_L4_CSUM_SCTP;
 			break;
 		}
+	}
+
+	if (nic->hw_tso && skb_shinfo(skb)->gso_size) {
+		hdr->tso = 1;
+		hdr->tso_start = skb_transport_offset(skb) + tcp_hdrlen(skb);
+		hdr->tso_max_paysize = skb_shinfo(skb)->gso_size;
+		/* For non-tunneled pkts, point this to L2 ethertype */
+		hdr->inner_l3_offset = skb_network_offset(skb) - 2;
+		nic->drv_stats.tx_tso++;
 	}
 }
 
@@ -1005,7 +1009,7 @@ static inline void nicvf_sq_add_gather_subdesc(struct snd_queue *sq, int qentry,
  * them to SQ for transfer
  */
 static int nicvf_sq_append_tso(struct nicvf *nic, struct snd_queue *sq,
-			       int qentry, struct sk_buff *skb)
+			       int sq_num, int qentry, struct sk_buff *skb)
 {
 	struct tso_t tso;
 	int seg_subdescs = 0, desc_cnt = 0;
@@ -1050,7 +1054,7 @@ static int nicvf_sq_append_tso(struct nicvf *nic, struct snd_queue *sq,
 			data_left -= size;
 			tso_build_data(skb, &tso, size);
 		}
-		nicvf_sq_add_hdr_subdesc(sq, hdr_qentry,
+		nicvf_sq_add_hdr_subdesc(nic, sq, hdr_qentry,
 					 seg_subdescs - 1, skb, seg_len);
 		sq->skbuff[hdr_qentry] = (u64)NULL;
 		qentry = nicvf_get_nxt_sqentry(sq, qentry);
@@ -1065,7 +1069,7 @@ static int nicvf_sq_append_tso(struct nicvf *nic, struct snd_queue *sq,
 
 	/* Inform HW to xmit all TSO segments */
 	nicvf_queue_reg_write(nic, NIC_QSET_SQ_0_7_DOOR,
-			      skb_get_queue_mapping(skb), desc_cnt);
+			      sq_num, desc_cnt);
 	nic->drv_stats.tx_tso++;
 	return 1;
 }
@@ -1076,10 +1080,24 @@ int nicvf_sq_append_skb(struct nicvf *nic, struct sk_buff *skb)
 	int i, size;
 	int subdesc_cnt;
 	int sq_num, qentry;
-	struct queue_set *qs = nic->qs;
+	struct queue_set *qs;
 	struct snd_queue *sq;
 
 	sq_num = skb_get_queue_mapping(skb);
+	if (sq_num >= MAX_SND_QUEUES_PER_QS) {
+		/* Get secondary Qset's SQ structure */
+		i = sq_num / MAX_SND_QUEUES_PER_QS;
+		if (!nic->snicvf[i - 1]) {
+			netdev_warn(nic->netdev,
+				    "Secondary Qset#%d's ptr not initialized\n",
+				    i - 1);
+			return 1;
+		}
+		nic = (struct nicvf *)nic->snicvf[i - 1];
+		sq_num = sq_num % MAX_SND_QUEUES_PER_QS;
+	}
+
+	qs = nic->qs;
 	sq = &qs->sq[sq_num];
 
 	subdesc_cnt = nicvf_sq_subdesc_required(nic, skb);
@@ -1089,11 +1107,12 @@ int nicvf_sq_append_skb(struct nicvf *nic, struct sk_buff *skb)
 	qentry = nicvf_get_sq_desc(sq, subdesc_cnt);
 
 	/* Check if its a TSO packet */
-	if (skb_shinfo(skb)->gso_size)
-		return nicvf_sq_append_tso(nic, sq, qentry, skb);
+	if (skb_shinfo(skb)->gso_size && !nic->hw_tso)
+		return nicvf_sq_append_tso(nic, sq, sq_num, qentry, skb);
 
 	/* Add SQ header subdesc */
-	nicvf_sq_add_hdr_subdesc(sq, qentry, subdesc_cnt - 1, skb, skb->len);
+	nicvf_sq_add_hdr_subdesc(nic, sq, qentry, subdesc_cnt - 1,
+				 skb, skb->len);
 
 	/* Add SQ gather subdescs */
 	qentry = nicvf_get_nxt_sqentry(sq, qentry);
@@ -1126,6 +1145,8 @@ doorbell:
 	return 1;
 
 append_fail:
+	/* Use original PCI dev for debug log */
+	nic = nic->pnicvf;
 	netdev_dbg(nic->netdev, "Not enough SQ descriptors to xmit pkt\n");
 	return 0;
 }
@@ -1192,84 +1213,9 @@ struct sk_buff *nicvf_get_rcv_skb(struct nicvf *nic, struct cqe_rx_t *cqe_rx)
 	return skb;
 }
 
-/* Enable interrupt */
-void nicvf_enable_intr(struct nicvf *nic, int int_type, int q_idx)
+static u64 nicvf_int_type_to_mask(int int_type, int q_idx)
 {
 	u64 reg_val;
-
-	reg_val = nicvf_reg_read(nic, NIC_VF_ENA_W1S);
-
-	switch (int_type) {
-	case NICVF_INTR_CQ:
-		reg_val |= ((1ULL << q_idx) << NICVF_INTR_CQ_SHIFT);
-		break;
-	case NICVF_INTR_SQ:
-		reg_val |= ((1ULL << q_idx) << NICVF_INTR_SQ_SHIFT);
-		break;
-	case NICVF_INTR_RBDR:
-		reg_val |= ((1ULL << q_idx) << NICVF_INTR_RBDR_SHIFT);
-		break;
-	case NICVF_INTR_PKT_DROP:
-		reg_val |= (1ULL << NICVF_INTR_PKT_DROP_SHIFT);
-		break;
-	case NICVF_INTR_TCP_TIMER:
-		reg_val |= (1ULL << NICVF_INTR_TCP_TIMER_SHIFT);
-		break;
-	case NICVF_INTR_MBOX:
-		reg_val |= (1ULL << NICVF_INTR_MBOX_SHIFT);
-		break;
-	case NICVF_INTR_QS_ERR:
-		reg_val |= (1ULL << NICVF_INTR_QS_ERR_SHIFT);
-		break;
-	default:
-		netdev_err(nic->netdev,
-			   "Failed to enable interrupt: unknown type\n");
-		break;
-	}
-
-	nicvf_reg_write(nic, NIC_VF_ENA_W1S, reg_val);
-}
-
-/* Disable interrupt */
-void nicvf_disable_intr(struct nicvf *nic, int int_type, int q_idx)
-{
-	u64 reg_val = 0;
-
-	switch (int_type) {
-	case NICVF_INTR_CQ:
-		reg_val |= ((1ULL << q_idx) << NICVF_INTR_CQ_SHIFT);
-		break;
-	case NICVF_INTR_SQ:
-		reg_val |= ((1ULL << q_idx) << NICVF_INTR_SQ_SHIFT);
-		break;
-	case NICVF_INTR_RBDR:
-		reg_val |= ((1ULL << q_idx) << NICVF_INTR_RBDR_SHIFT);
-		break;
-	case NICVF_INTR_PKT_DROP:
-		reg_val |= (1ULL << NICVF_INTR_PKT_DROP_SHIFT);
-		break;
-	case NICVF_INTR_TCP_TIMER:
-		reg_val |= (1ULL << NICVF_INTR_TCP_TIMER_SHIFT);
-		break;
-	case NICVF_INTR_MBOX:
-		reg_val |= (1ULL << NICVF_INTR_MBOX_SHIFT);
-		break;
-	case NICVF_INTR_QS_ERR:
-		reg_val |= (1ULL << NICVF_INTR_QS_ERR_SHIFT);
-		break;
-	default:
-		netdev_err(nic->netdev,
-			   "Failed to disable interrupt: unknown type\n");
-		break;
-	}
-
-	nicvf_reg_write(nic, NIC_VF_ENA_W1C, reg_val);
-}
-
-/* Clear interrupt */
-void nicvf_clear_intr(struct nicvf *nic, int int_type, int q_idx)
-{
-	u64 reg_val = 0;
 
 	switch (int_type) {
 	case NICVF_INTR_CQ:
@@ -1291,54 +1237,69 @@ void nicvf_clear_intr(struct nicvf *nic, int int_type, int q_idx)
 		reg_val = (1ULL << NICVF_INTR_MBOX_SHIFT);
 		break;
 	case NICVF_INTR_QS_ERR:
-		reg_val |= (1ULL << NICVF_INTR_QS_ERR_SHIFT);
+		reg_val = (1ULL << NICVF_INTR_QS_ERR_SHIFT);
 		break;
 	default:
-		netdev_err(nic->netdev,
-			   "Failed to clear interrupt: unknown type\n");
-		break;
+		reg_val = 0;
 	}
 
-	nicvf_reg_write(nic, NIC_VF_INT, reg_val);
+	return reg_val;
+}
+
+/* Enable interrupt */
+void nicvf_enable_intr(struct nicvf *nic, int int_type, int q_idx)
+{
+	u64 mask = nicvf_int_type_to_mask(int_type, q_idx);
+
+	if (!mask) {
+		netdev_dbg(nic->netdev,
+			   "Failed to enable interrupt: unknown type\n");
+		return;
+	}
+	nicvf_reg_write(nic, NIC_VF_ENA_W1S,
+			nicvf_reg_read(nic, NIC_VF_ENA_W1S) | mask);
+}
+
+/* Disable interrupt */
+void nicvf_disable_intr(struct nicvf *nic, int int_type, int q_idx)
+{
+	u64 mask = nicvf_int_type_to_mask(int_type, q_idx);
+
+	if (!mask) {
+		netdev_dbg(nic->netdev,
+			   "Failed to disable interrupt: unknown type\n");
+		return;
+	}
+
+	nicvf_reg_write(nic, NIC_VF_ENA_W1C, mask);
+}
+
+/* Clear interrupt */
+void nicvf_clear_intr(struct nicvf *nic, int int_type, int q_idx)
+{
+	u64 mask = nicvf_int_type_to_mask(int_type, q_idx);
+
+	if (!mask) {
+		netdev_dbg(nic->netdev,
+			   "Failed to clear interrupt: unknown type\n");
+		return;
+	}
+
+	nicvf_reg_write(nic, NIC_VF_INT, mask);
 }
 
 /* Check if interrupt is enabled */
 int nicvf_is_intr_enabled(struct nicvf *nic, int int_type, int q_idx)
 {
-	u64 reg_val;
-	u64 mask = 0xff;
-
-	reg_val = nicvf_reg_read(nic, NIC_VF_ENA_W1S);
-
-	switch (int_type) {
-	case NICVF_INTR_CQ:
-		mask = ((1ULL << q_idx) << NICVF_INTR_CQ_SHIFT);
-		break;
-	case NICVF_INTR_SQ:
-		mask = ((1ULL << q_idx) << NICVF_INTR_SQ_SHIFT);
-		break;
-	case NICVF_INTR_RBDR:
-		mask = ((1ULL << q_idx) << NICVF_INTR_RBDR_SHIFT);
-		break;
-	case NICVF_INTR_PKT_DROP:
-		mask = NICVF_INTR_PKT_DROP_MASK;
-		break;
-	case NICVF_INTR_TCP_TIMER:
-		mask = NICVF_INTR_TCP_TIMER_MASK;
-		break;
-	case NICVF_INTR_MBOX:
-		mask = NICVF_INTR_MBOX_MASK;
-		break;
-	case NICVF_INTR_QS_ERR:
-		mask = NICVF_INTR_QS_ERR_MASK;
-		break;
-	default:
-		netdev_err(nic->netdev,
+	u64 mask = nicvf_int_type_to_mask(int_type, q_idx);
+	/* If interrupt type is unknown, we treat it disabled. */
+	if (!mask) {
+		netdev_dbg(nic->netdev,
 			   "Failed to check interrupt enable: unknown type\n");
-		break;
+		return 0;
 	}
 
-	return (reg_val & mask);
+	return mask & nicvf_reg_read(nic, NIC_VF_ENA_W1S);
 }
 
 void nicvf_update_rq_stats(struct nicvf *nic, int rq_idx)
@@ -1368,15 +1329,12 @@ void nicvf_update_sq_stats(struct nicvf *nic, int sq_idx)
 }
 
 /* Check for errors in the receive cmp.queue entry */
-int nicvf_check_cqe_rx_errs(struct nicvf *nic,
-			    struct cmp_queue *cq, struct cqe_rx_t *cqe_rx)
+int nicvf_check_cqe_rx_errs(struct nicvf *nic, struct cqe_rx_t *cqe_rx)
 {
-	struct cmp_queue_stats *stats = &cq->stats;
+	struct nicvf_hw_stats *stats = &nic->hw_stats;
 
-	if (!cqe_rx->err_level && !cqe_rx->err_opcode) {
-		stats->rx.errop.good++;
+	if (!cqe_rx->err_level && !cqe_rx->err_opcode)
 		return 0;
-	}
 
 	if (netif_msg_rx_err(nic))
 		netdev_err(nic->netdev,
@@ -1384,111 +1342,78 @@ int nicvf_check_cqe_rx_errs(struct nicvf *nic,
 			   nic->netdev->name,
 			   cqe_rx->err_level, cqe_rx->err_opcode);
 
-	switch (cqe_rx->err_level) {
-	case CQ_ERRLVL_MAC:
-		stats->rx.errlvl.mac_errs++;
-		break;
-	case CQ_ERRLVL_L2:
-		stats->rx.errlvl.l2_errs++;
-		break;
-	case CQ_ERRLVL_L3:
-		stats->rx.errlvl.l3_errs++;
-		break;
-	case CQ_ERRLVL_L4:
-		stats->rx.errlvl.l4_errs++;
-		break;
-	}
-
 	switch (cqe_rx->err_opcode) {
 	case CQ_RX_ERROP_RE_PARTIAL:
-		stats->rx.errop.partial_pkts++;
+		stats->rx_bgx_truncated_pkts++;
 		break;
 	case CQ_RX_ERROP_RE_JABBER:
-		stats->rx.errop.jabber_errs++;
+		stats->rx_jabber_errs++;
 		break;
 	case CQ_RX_ERROP_RE_FCS:
-		stats->rx.errop.fcs_errs++;
-		break;
-	case CQ_RX_ERROP_RE_TERMINATE:
-		stats->rx.errop.terminate_errs++;
+		stats->rx_fcs_errs++;
 		break;
 	case CQ_RX_ERROP_RE_RX_CTL:
-		stats->rx.errop.bgx_rx_errs++;
+		stats->rx_bgx_errs++;
 		break;
 	case CQ_RX_ERROP_PREL2_ERR:
-		stats->rx.errop.prel2_errs++;
-		break;
-	case CQ_RX_ERROP_L2_FRAGMENT:
-		stats->rx.errop.l2_frags++;
-		break;
-	case CQ_RX_ERROP_L2_OVERRUN:
-		stats->rx.errop.l2_overruns++;
-		break;
-	case CQ_RX_ERROP_L2_PFCS:
-		stats->rx.errop.l2_pfcs++;
-		break;
-	case CQ_RX_ERROP_L2_PUNY:
-		stats->rx.errop.l2_puny++;
+		stats->rx_prel2_errs++;
 		break;
 	case CQ_RX_ERROP_L2_MAL:
-		stats->rx.errop.l2_hdr_malformed++;
+		stats->rx_l2_hdr_malformed++;
 		break;
 	case CQ_RX_ERROP_L2_OVERSIZE:
-		stats->rx.errop.l2_oversize++;
+		stats->rx_oversize++;
 		break;
 	case CQ_RX_ERROP_L2_UNDERSIZE:
-		stats->rx.errop.l2_undersize++;
+		stats->rx_undersize++;
 		break;
 	case CQ_RX_ERROP_L2_LENMISM:
-		stats->rx.errop.l2_len_mismatch++;
+		stats->rx_l2_len_mismatch++;
 		break;
 	case CQ_RX_ERROP_L2_PCLP:
-		stats->rx.errop.l2_pclp++;
+		stats->rx_l2_pclp++;
 		break;
 	case CQ_RX_ERROP_IP_NOT:
-		stats->rx.errop.non_ip++;
+		stats->rx_ip_ver_errs++;
 		break;
 	case CQ_RX_ERROP_IP_CSUM_ERR:
-		stats->rx.errop.ip_csum_err++;
+		stats->rx_ip_csum_errs++;
 		break;
 	case CQ_RX_ERROP_IP_MAL:
-		stats->rx.errop.ip_hdr_malformed++;
+		stats->rx_ip_hdr_malformed++;
 		break;
 	case CQ_RX_ERROP_IP_MALD:
-		stats->rx.errop.ip_payload_malformed++;
+		stats->rx_ip_payload_malformed++;
 		break;
 	case CQ_RX_ERROP_IP_HOP:
-		stats->rx.errop.ip_hop_errs++;
-		break;
-	case CQ_RX_ERROP_L3_ICRC:
-		stats->rx.errop.l3_icrc_errs++;
+		stats->rx_ip_ttl_errs++;
 		break;
 	case CQ_RX_ERROP_L3_PCLP:
-		stats->rx.errop.l3_pclp++;
+		stats->rx_l3_pclp++;
 		break;
 	case CQ_RX_ERROP_L4_MAL:
-		stats->rx.errop.l4_malformed++;
+		stats->rx_l4_malformed++;
 		break;
 	case CQ_RX_ERROP_L4_CHK:
-		stats->rx.errop.l4_csum_errs++;
+		stats->rx_l4_csum_errs++;
 		break;
 	case CQ_RX_ERROP_UDP_LEN:
-		stats->rx.errop.udp_len_err++;
+		stats->rx_udp_len_errs++;
 		break;
 	case CQ_RX_ERROP_L4_PORT:
-		stats->rx.errop.bad_l4_port++;
+		stats->rx_l4_port_errs++;
 		break;
 	case CQ_RX_ERROP_TCP_FLAG:
-		stats->rx.errop.bad_tcp_flag++;
+		stats->rx_tcp_flag_errs++;
 		break;
 	case CQ_RX_ERROP_TCP_OFFSET:
-		stats->rx.errop.tcp_offset_errs++;
+		stats->rx_tcp_offset_errs++;
 		break;
 	case CQ_RX_ERROP_L4_PCLP:
-		stats->rx.errop.l4_pclp++;
+		stats->rx_l4_pclp++;
 		break;
 	case CQ_RX_ERROP_RBDR_TRUNC:
-		stats->rx.errop.pkt_truncated++;
+		stats->rx_truncated_pkts++;
 		break;
 	}
 

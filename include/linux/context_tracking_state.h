@@ -14,6 +14,7 @@ struct context_tracking {
 	bool active;
 	int recursion;
 	enum ctx_state {
+		CONTEXT_DISABLED = -1,	/* returned by ct_state() if unknown */
 		CONTEXT_KERNEL = 0,
 		CONTEXT_USER,
 		CONTEXT_GUEST,
@@ -21,12 +22,12 @@ struct context_tracking {
 };
 
 #ifdef CONFIG_CONTEXT_TRACKING
-extern struct static_key context_tracking_enabled;
+extern struct static_key_false context_tracking_enabled;
 DECLARE_PER_CPU(struct context_tracking, context_tracking);
 
 static inline bool context_tracking_is_enabled(void)
 {
-	return static_key_false(&context_tracking_enabled);
+	return static_branch_unlikely(&context_tracking_enabled);
 }
 
 static inline bool context_tracking_cpu_is_enabled(void)

@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2015, Intel Corp.
+ * Copyright (C) 2000 - 2016, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -662,6 +662,7 @@ typedef u32 acpi_object_type;
 #define ACPI_TYPE_DEBUG_OBJECT          0x10
 
 #define ACPI_TYPE_EXTERNAL_MAX          0x10
+#define ACPI_NUM_TYPES                  (ACPI_TYPE_EXTERNAL_MAX + 1)
 
 /*
  * These are object types that do not map directly to the ACPI
@@ -683,6 +684,7 @@ typedef u32 acpi_object_type;
 #define ACPI_TYPE_LOCAL_SCOPE           0x1B	/* 1 Name, multiple object_list Nodes */
 
 #define ACPI_TYPE_NS_NODE_MAX           0x1B	/* Last typecode used within a NS Node */
+#define ACPI_TOTAL_TYPES                (ACPI_TYPE_NS_NODE_MAX + 1)
 
 /*
  * These are special object types that never appear in
@@ -985,7 +987,8 @@ struct acpi_buffer {
  */
 #define ACPI_FULL_PATHNAME              0
 #define ACPI_SINGLE_NAME                1
-#define ACPI_NAME_TYPE_MAX              1
+#define ACPI_FULL_PATHNAME_NO_TRAILING  2
+#define ACPI_NAME_TYPE_MAX              2
 
 /*
  * Predefined Namespace items
@@ -1145,7 +1148,7 @@ u32 (*acpi_interface_handler) (acpi_string interface_name, u32 supported);
 
 #define ACPI_PCICLS_STRING_SIZE         7	/* Includes null terminator */
 
-/* Structures used for device/processor HID, UID, CID, and SUB */
+/* Structures used for device/processor HID, UID, CID */
 
 struct acpi_pnp_device_id {
 	u32 length;		/* Length of string + null */
@@ -1175,7 +1178,6 @@ struct acpi_device_info {
 	u64 address;	/* _ADR value */
 	struct acpi_pnp_device_id hardware_id;	/* _HID value */
 	struct acpi_pnp_device_id unique_id;	/* _UID value */
-	struct acpi_pnp_device_id subsystem_id;	/* _SUB value */
 	struct acpi_pnp_device_id class_code;	/* _CLS value */
 	struct acpi_pnp_device_id_list compatible_id_list;	/* _CID list <must be last> */
 };
@@ -1190,13 +1192,12 @@ struct acpi_device_info {
 #define ACPI_VALID_ADR                  0x0002
 #define ACPI_VALID_HID                  0x0004
 #define ACPI_VALID_UID                  0x0008
-#define ACPI_VALID_SUB                  0x0010
 #define ACPI_VALID_CID                  0x0020
 #define ACPI_VALID_CLS                  0x0040
 #define ACPI_VALID_SXDS                 0x0100
 #define ACPI_VALID_SXWS                 0x0200
 
-/* Flags for _STA return value (current_status above) */
+/* Flags for _STA method */
 
 #define ACPI_STA_DEVICE_PRESENT         0x01
 #define ACPI_STA_DEVICE_ENABLED         0x02
@@ -1245,6 +1246,14 @@ struct acpi_memory_list {
 	u32 hits;
 #endif
 };
+
+/* Definitions of trace event types */
+
+typedef enum {
+	ACPI_TRACE_AML_METHOD,
+	ACPI_TRACE_AML_OPCODE,
+	ACPI_TRACE_AML_REGION
+} acpi_trace_event_type;
 
 /* Definitions of _OSI support */
 

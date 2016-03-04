@@ -75,18 +75,16 @@
  */
 #define CMP_QSIZE		CMP_QUEUE_SIZE2
 #define CMP_QUEUE_LEN		(1ULL << (CMP_QSIZE + 10))
-#define CMP_QUEUE_CQE_THRESH	0
-#define CMP_QUEUE_TIMER_THRESH	220 /* 10usec */
+#define CMP_QUEUE_CQE_THRESH	(NAPI_POLL_WEIGHT / 2)
+#define CMP_QUEUE_TIMER_THRESH	80 /* ~2usec */
 
 #define RBDR_SIZE		RBDR_SIZE0
 #define RCV_BUF_COUNT		(1ULL << (RBDR_SIZE + 13))
 #define MAX_RCV_BUF_COUNT	(1ULL << (RBDR_SIZE6 + 13))
 #define RBDR_THRESH		(RCV_BUF_COUNT / 2)
 #define DMA_BUFFER_LEN		2048 /* In multiples of 128bytes */
-#define RCV_FRAG_LEN	(SKB_DATA_ALIGN(DMA_BUFFER_LEN + NET_SKB_PAD) + \
-			 SKB_DATA_ALIGN(sizeof(struct skb_shared_info)) + \
-			 (NICVF_RCV_BUF_ALIGN_BYTES * 2))
-#define RCV_DATA_OFFSET		NICVF_RCV_BUF_ALIGN_BYTES
+#define RCV_FRAG_LEN	 (SKB_DATA_ALIGN(DMA_BUFFER_LEN + NET_SKB_PAD) + \
+			 SKB_DATA_ALIGN(sizeof(struct skb_shared_info)))
 
 #define MAX_CQES_FOR_TX		((SND_QUEUE_LEN / MIN_SQ_DESC_PER_PKT_XMIT) * \
 				 MAX_CQE_PER_PKT_XMIT)
@@ -108,10 +106,6 @@
 #define NICVF_SQ_BASE_ALIGN_BYTES	128  /* 7 bits */
 
 #define NICVF_ALIGNED_ADDR(ADDR, ALIGN_BYTES)	ALIGN(ADDR, ALIGN_BYTES)
-#define NICVF_ADDR_ALIGN_LEN(ADDR, BYTES)\
-	(NICVF_ALIGNED_ADDR(ADDR, BYTES) - BYTES)
-#define NICVF_RCV_BUF_ALIGN_LEN(X)\
-	(NICVF_ALIGNED_ADDR(X, NICVF_RCV_BUF_ALIGN_BYTES) - X)
 
 /* Queue enable/disable */
 #define NICVF_SQ_EN		BIT_ULL(19)
@@ -181,47 +175,6 @@ enum CQ_TX_ERROP_E {
 };
 
 struct cmp_queue_stats {
-	struct rx_stats {
-		struct {
-			u64 mac_errs;
-			u64 l2_errs;
-			u64 l3_errs;
-			u64 l4_errs;
-		} errlvl;
-		struct {
-			u64 good;
-			u64 partial_pkts;
-			u64 jabber_errs;
-			u64 fcs_errs;
-			u64 terminate_errs;
-			u64 bgx_rx_errs;
-			u64 prel2_errs;
-			u64 l2_frags;
-			u64 l2_overruns;
-			u64 l2_pfcs;
-			u64 l2_puny;
-			u64 l2_hdr_malformed;
-			u64 l2_oversize;
-			u64 l2_undersize;
-			u64 l2_len_mismatch;
-			u64 l2_pclp;
-			u64 non_ip;
-			u64 ip_csum_err;
-			u64 ip_hdr_malformed;
-			u64 ip_payload_malformed;
-			u64 ip_hop_errs;
-			u64 l3_icrc_errs;
-			u64 l3_pclp;
-			u64 l4_malformed;
-			u64 l4_csum_errs;
-			u64 udp_len_err;
-			u64 bad_l4_port;
-			u64 bad_tcp_flag;
-			u64 tcp_offset_errs;
-			u64 l4_pclp;
-			u64 pkt_truncated;
-		} errop;
-	} rx;
 	struct tx_stats {
 		u64 good;
 		u64 desc_fault;
@@ -292,6 +245,7 @@ struct cmp_queue {
 	void		*desc;
 	struct q_desc_mem   dmem;
 	struct cmp_queue_stats	stats;
+	int		irq;
 } ____cacheline_aligned_in_smp;
 
 struct snd_queue {
@@ -347,6 +301,8 @@ struct queue_set {
 
 #define	CQ_ERR_MASK	(CQ_WR_FULL | CQ_WR_DISABLE | CQ_WR_FAULT)
 
+void nicvf_config_vlan_stripping(struct nicvf *nic,
+				 netdev_features_t features);
 int nicvf_set_qset_resources(struct nicvf *nic);
 int nicvf_config_data_transfer(struct nicvf *nic, bool enable);
 void nicvf_qset_config(struct nicvf *nic, bool enable);
@@ -382,8 +338,7 @@ u64  nicvf_queue_reg_read(struct nicvf *nic,
 /* Stats */
 void nicvf_update_rq_stats(struct nicvf *nic, int rq_idx);
 void nicvf_update_sq_stats(struct nicvf *nic, int sq_idx);
-int nicvf_check_cqe_rx_errs(struct nicvf *nic,
-			    struct cmp_queue *cq, struct cqe_rx_t *cqe_rx);
+int nicvf_check_cqe_rx_errs(struct nicvf *nic, struct cqe_rx_t *cqe_rx);
 int nicvf_check_cqe_tx_errs(struct nicvf *nic,
 			    struct cmp_queue *cq, struct cqe_send_t *cqe_tx);
 #endif /* NICVF_QUEUES_H */

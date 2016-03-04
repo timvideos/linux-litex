@@ -246,8 +246,10 @@ int __init numa_cleanup_meminfo(struct numa_meminfo *mi)
 		bi->start = max(bi->start, low);
 		bi->end = min(bi->end, high);
 
-		/* and there's no empty block */
-		if (bi->start >= bi->end)
+		/* and there's no empty or non-exist block */
+		if (bi->start >= bi->end ||
+		    !memblock_overlaps_region(&memblock.memory,
+			bi->start, bi->end - bi->start))
 			numa_remove_memblk_from(i--, mi);
 	}
 
@@ -467,7 +469,7 @@ static void __init numa_clear_kernel_node_hotplug(void)
 {
 	int i, nid;
 	nodemask_t numa_kernel_nodes = NODE_MASK_NONE;
-	unsigned long start, end;
+	phys_addr_t start, end;
 	struct memblock_region *r;
 
 	/*

@@ -1,8 +1,6 @@
 /*
  * Support PCI/PCIe on PowerNV platforms
  *
- * Currently supports only P5IOC2
- *
  * Copyright 2011 Benjamin Herrenschmidt, IBM Corp.
  *
  * This program is free software; you can redistribute it and/or
@@ -61,7 +59,7 @@ int pnv_setup_msi_irqs(struct pci_dev *pdev, int nvec, int type)
 	if (pdev->no_64bit_msi && !phb->msi32_support)
 		return -ENODEV;
 
-	list_for_each_entry(entry, &pdev->msi_list, list) {
+	for_each_pci_msi_entry(entry, pdev) {
 		if (!entry->msi_attrib.is_64 && !phb->msi32_support) {
 			pr_warn("%s: Supports only 64-bit MSIs\n",
 				pci_name(pdev));
@@ -99,17 +97,18 @@ void pnv_teardown_msi_irqs(struct pci_dev *pdev)
 	struct pci_controller *hose = pci_bus_to_host(pdev->bus);
 	struct pnv_phb *phb = hose->private_data;
 	struct msi_desc *entry;
+	irq_hw_number_t hwirq;
 
 	if (WARN_ON(!phb))
 		return;
 
-	list_for_each_entry(entry, &pdev->msi_list, list) {
+	for_each_pci_msi_entry(entry, pdev) {
 		if (entry->irq == NO_IRQ)
 			continue;
+		hwirq = virq_to_hw(entry->irq);
 		irq_set_msi_desc(entry->irq, NULL);
-		msi_bitmap_free_hwirqs(&phb->msi_bmp,
-			virq_to_hw(entry->irq) - phb->msi_base, 1);
 		irq_dispose_mapping(entry->irq);
+		msi_bitmap_free_hwirqs(&phb->msi_bmp, hwirq - phb->msi_base, 1);
 	}
 }
 #endif /* CONFIG_PCI_MSI */
@@ -600,6 +599,9 @@ int pnv_tce_build(struct iommu_table *tbl, long index, long npages,
 	u64 rpn = __pa(uaddr) >> tbl->it_page_shift;
 	long i;
 
+	if (proto_tce & TCE_PCI_WRITE)
+		proto_tce |= TCE_PCI_READ;
+
 	for (i = 0; i < npages; i++) {
 		unsigned long newtce = proto_tce |
 			((rpn + i) << tbl->it_page_shift);
@@ -620,6 +622,9 @@ int pnv_tce_xchg(struct iommu_table *tbl, long index,
 	unsigned long idx = index - tbl->it_offset;
 
 	BUG_ON(*hpa & ~IOMMU_PAGE_MASK(tbl));
+
+	if (newtce & TCE_PCI_WRITE)
+		newtce |= TCE_PCI_READ;
 
 	oldtce = xchg(pnv_tce(tbl, idx), cpu_to_be64(newtce));
 	*hpa = be64_to_cpu(oldtce) & ~(TCE_PCI_READ | TCE_PCI_WRITE);
@@ -761,15 +766,24 @@ void pnv_pci_dma_dev_setup(struct pci_dev *pdev)
 		phb->dma_dev_setup(phb, pdev);
 }
 
-u64 pnv_pci_dma_get_required_mask(struct pci_dev *pdev)
+void pnv_pci_dma_bus_setup(struct pci_bus *bus)
 {
-	struct pci_controller *hose = pci_bus_to_host(pdev->bus);
+	struct pci_controller *hose = bus->sysdata;
 	struct pnv_phb *phb = hose->private_data;
+	struct pnv_ioda_pe *pe;
 
-	if (phb && phb->dma_get_required_mask)
-		return phb->dma_get_required_mask(phb, pdev);
+	list_for_each_entry(pe, &phb->ioda.pe_list, list) {
+		if (!(pe->flags & (PNV_IODA_PE_BUS | PNV_IODA_PE_BUS_ALL)))
+			continue;
 
-	return __dma_get_required_mask(&pdev->dev);
+		if (!pe->pbus)
+			continue;
+
+		if (bus->number == ((pe->rid >> 8) & 0xFF)) {
+			pe->pbus = bus;
+			break;
+		}
+	}
 }
 
 void pnv_pci_shutdown(void)
@@ -816,6 +830,10 @@ void __init pnv_pci_init(void)
 	/* Look for ioda2 built-in PHB3's */
 	for_each_compatible_node(np, NULL, "ibm,ioda2-phb")
 		pnv_pci_init_ioda2_phb(np);
+
+	/* Look for NPU PHBs */
+	for_each_compatible_node(np, NULL, "ibm,ioda2-npu-phb")
+		pnv_pci_init_npu_phb(np);
 
 	/* Setup the linkage between OF nodes and PHBs */
 	pci_devs_phb_init();

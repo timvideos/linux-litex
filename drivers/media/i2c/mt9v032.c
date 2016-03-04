@@ -25,7 +25,7 @@
 #include <linux/v4l2-mediabus.h>
 #include <linux/module.h>
 
-#include <media/mt9v032.h>
+#include <media/i2c/mt9v032.h>
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-of.h>
@@ -703,7 +703,7 @@ static int mt9v032_s_ctrl(struct v4l2_ctrl *ctrl)
 	return 0;
 }
 
-static struct v4l2_ctrl_ops mt9v032_ctrl_ops = {
+static const struct v4l2_ctrl_ops mt9v032_ctrl_ops = {
 	.s_ctrl = mt9v032_s_ctrl,
 };
 
@@ -882,7 +882,7 @@ static const struct regmap_config mt9v032_regmap_config = {
 static struct mt9v032_platform_data *
 mt9v032_get_pdata(struct i2c_client *client)
 {
-	struct mt9v032_platform_data *pdata;
+	struct mt9v032_platform_data *pdata = NULL;
 	struct v4l2_of_endpoint endpoint;
 	struct device_node *np;
 	struct property *prop;
@@ -1046,7 +1046,7 @@ static int mt9v032_probe(struct i2c_client *client,
 	mt9v032->subdev.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
 
 	mt9v032->pad.flags = MEDIA_PAD_FL_SOURCE;
-	ret = media_entity_init(&mt9v032->subdev.entity, 1, &mt9v032->pad, 0);
+	ret = media_entity_pads_init(&mt9v032->subdev.entity, 1, &mt9v032->pad);
 	if (ret < 0)
 		goto err;
 

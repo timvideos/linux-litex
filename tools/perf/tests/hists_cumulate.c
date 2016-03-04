@@ -279,8 +279,9 @@ static int test1(struct perf_evsel *evsel, struct machine *machine)
 
 	symbol_conf.use_callchain = false;
 	symbol_conf.cumulate_callchain = false;
+	perf_evsel__reset_sample_bit(evsel, CALLCHAIN);
 
-	setup_sorting();
+	setup_sorting(NULL);
 	callchain_register_param(&callchain_param);
 
 	err = add_hist_entries(hists, machine);
@@ -425,8 +426,9 @@ static int test2(struct perf_evsel *evsel, struct machine *machine)
 
 	symbol_conf.use_callchain = true;
 	symbol_conf.cumulate_callchain = false;
+	perf_evsel__set_sample_bit(evsel, CALLCHAIN);
 
-	setup_sorting();
+	setup_sorting(NULL);
 	callchain_register_param(&callchain_param);
 
 	err = add_hist_entries(hists, machine);
@@ -482,8 +484,9 @@ static int test3(struct perf_evsel *evsel, struct machine *machine)
 
 	symbol_conf.use_callchain = false;
 	symbol_conf.cumulate_callchain = true;
+	perf_evsel__reset_sample_bit(evsel, CALLCHAIN);
 
-	setup_sorting();
+	setup_sorting(NULL);
 	callchain_register_param(&callchain_param);
 
 	err = add_hist_entries(hists, machine);
@@ -665,8 +668,9 @@ static int test4(struct perf_evsel *evsel, struct machine *machine)
 
 	symbol_conf.use_callchain = true;
 	symbol_conf.cumulate_callchain = true;
+	perf_evsel__set_sample_bit(evsel, CALLCHAIN);
 
-	setup_sorting();
+	setup_sorting(NULL);
 	callchain_register_param(&callchain_param);
 
 	err = add_hist_entries(hists, machine);
@@ -682,7 +686,7 @@ out:
 	return err;
 }
 
-int test__hists_cumulate(void)
+int test__hists_cumulate(int subtest __maybe_unused)
 {
 	int err = TEST_FAIL;
 	struct machines machines;
@@ -702,6 +706,7 @@ int test__hists_cumulate(void)
 	err = parse_events(evlist, "cpu-clock", NULL);
 	if (err)
 		goto out;
+	err = TEST_FAIL;
 
 	machines__init(&machines);
 

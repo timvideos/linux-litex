@@ -100,7 +100,6 @@ int mlx4_en_activate_cq(struct mlx4_en_priv *priv, struct mlx4_en_cq *cq,
 {
 	struct mlx4_en_dev *mdev = priv->mdev;
 	int err = 0;
-	char name[25];
 	int timestamp_en = 0;
 	bool assigned_eq = false;
 
@@ -119,8 +118,8 @@ int mlx4_en_activate_cq(struct mlx4_en_priv *priv, struct mlx4_en_cq *cq,
 			err = mlx4_assign_eq(mdev->dev, priv->port,
 					     &cq->vector);
 			if (err) {
-				mlx4_err(mdev, "Failed assigning an EQ to %s\n",
-					 name);
+				mlx4_err(mdev, "Failed assigning an EQ to CQ vector %d\n",
+					 cq->vector);
 				goto free_eq;
 			}
 
@@ -156,13 +155,11 @@ int mlx4_en_activate_cq(struct mlx4_en_priv *priv, struct mlx4_en_cq *cq,
 	cq->mcq.comp  = cq->is_tx ? mlx4_en_tx_irq : mlx4_en_rx_irq;
 	cq->mcq.event = mlx4_en_cq_event;
 
-	if (cq->is_tx) {
-		netif_napi_add(cq->dev, &cq->napi, mlx4_en_poll_tx_cq,
-			       NAPI_POLL_WEIGHT);
-	} else {
+	if (cq->is_tx)
+		netif_tx_napi_add(cq->dev, &cq->napi, mlx4_en_poll_tx_cq,
+				  NAPI_POLL_WEIGHT);
+	else
 		netif_napi_add(cq->dev, &cq->napi, mlx4_en_poll_rx_cq, 64);
-		napi_hash_add(&cq->napi);
-	}
 
 	napi_enable(&cq->napi);
 

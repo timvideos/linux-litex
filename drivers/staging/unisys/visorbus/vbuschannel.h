@@ -1,10 +1,9 @@
-/* Copyright (C) 2010 - 2013 UNISYS CORPORATION
+/* Copyright (C) 2010 - 2015 UNISYS CORPORATION
  * All rights reserved.
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or (at
- * your option) any later version.
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -37,10 +36,11 @@ static const uuid_le spar_vbus_channel_protocol_uuid =
 #define SPAR_VBUS_CHANNEL_PROTOCOL_SIGNATURE ULTRA_CHANNEL_PROTOCOL_SIGNATURE
 
 /* Must increment this whenever you insert or delete fields within this channel
-* struct.  Also increment whenever you change the meaning of fields within this
-* channel struct so as to break pre-existing software.  Note that you can
-* usually add fields to the END of the channel struct withOUT needing to
-* increment this. */
+ * struct.  Also increment whenever you change the meaning of fields within this
+ * channel struct so as to break pre-existing software.  Note that you can
+ * usually add fields to the END of the channel struct withOUT needing to
+ * increment this.
+ */
 #define SPAR_VBUS_CHANNEL_PROTOCOL_VERSIONID 1
 
 #define SPAR_VBUS_CHANNEL_OK_CLIENT(ch)       \

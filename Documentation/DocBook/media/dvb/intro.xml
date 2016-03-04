@@ -32,7 +32,7 @@ and filtering several section and PES data streams at the same time.
 new standard Linux DVB API. As a commitment to the development of
 terminals based on open standards, Nokia and Convergence made it
 available to all Linux developers and published it on
-<ulink url="http://www.linuxtv.org/" /> in September 2000.
+<ulink url="https://linuxtv.org" /> in September 2000.
 Convergence is the maintainer of the Linux DVB API. Together with the
 LinuxTV community (i.e. you, the reader of this document), the Linux DVB
 API will be constantly reviewed and improved. With the Linux driver for
@@ -163,9 +163,8 @@ are called:</para>
 <para>where N enumerates the DVB PCI cards in a system starting
 from&#x00A0;0, and M enumerates the devices of each type within each
 adapter, starting from&#x00A0;0, too. We will omit the &#8220;
-<constant>/dev/dvb/adapterN/</constant>&#8221; in the further dicussion
-of these devices. The naming scheme for the devices is the same wheter
-devfs is used or not.</para>
+<constant>/dev/dvb/adapterN/</constant>&#8221; in the further discussion
+of these devices.</para>
 
 <para>More details about the data structures and function calls of all
 the devices are described in the following chapters.</para>

@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2015, Intel Corp.
+ * Copyright (C) 2000 - 2016, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -60,11 +60,11 @@ ACPI_MODULE_NAME("psutils")
  * DESCRIPTION: Create a Scope and associated namepath op with the root name
  *
  ******************************************************************************/
-union acpi_parse_object *acpi_ps_create_scope_op(void)
+union acpi_parse_object *acpi_ps_create_scope_op(u8 *aml)
 {
 	union acpi_parse_object *scope_op;
 
-	scope_op = acpi_ps_alloc_op(AML_SCOPE_OP);
+	scope_op = acpi_ps_alloc_op(AML_SCOPE_OP, aml);
 	if (!scope_op) {
 		return (NULL);
 	}
@@ -103,6 +103,7 @@ void acpi_ps_init_op(union acpi_parse_object *op, u16 opcode)
  * FUNCTION:    acpi_ps_alloc_op
  *
  * PARAMETERS:  opcode          - Opcode that will be stored in the new Op
+ *              aml             - Address of the opcode
  *
  * RETURN:      Pointer to the new Op, null on failure
  *
@@ -112,7 +113,7 @@ void acpi_ps_init_op(union acpi_parse_object *op, u16 opcode)
  *
  ******************************************************************************/
 
-union acpi_parse_object *acpi_ps_alloc_op(u16 opcode)
+union acpi_parse_object *acpi_ps_alloc_op(u16 opcode, u8 *aml)
 {
 	union acpi_parse_object *op;
 	const struct acpi_opcode_info *op_info;
@@ -149,6 +150,7 @@ union acpi_parse_object *acpi_ps_alloc_op(u16 opcode)
 
 	if (op) {
 		acpi_ps_init_op(op, opcode);
+		op->common.aml = aml;
 		op->common.flags = flags;
 	}
 
@@ -173,8 +175,8 @@ void acpi_ps_free_op(union acpi_parse_object *op)
 	ACPI_FUNCTION_NAME(ps_free_op);
 
 	if (op->common.aml_opcode == AML_INT_RETURN_VALUE_OP) {
-		ACPI_DEBUG_PRINT((ACPI_DB_ALLOCATIONS, "Free retval op: %p\n",
-				  op));
+		ACPI_DEBUG_PRINT((ACPI_DB_ALLOCATIONS,
+				  "Free retval op: %p\n", op));
 	}
 
 	if (op->common.flags & ACPI_PARSEOP_GENERIC) {
@@ -203,7 +205,6 @@ u8 acpi_ps_is_leading_char(u32 c)
 /*
  * Get op's name (4-byte name segment) or 0 if unnamed
  */
-#ifdef ACPI_FUTURE_USAGE
 u32 acpi_ps_get_name(union acpi_parse_object * op)
 {
 
@@ -217,7 +218,6 @@ u32 acpi_ps_get_name(union acpi_parse_object * op)
 
 	return (op->named.name);
 }
-#endif				/*  ACPI_FUTURE_USAGE  */
 
 /*
  * Set op's name

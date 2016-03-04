@@ -42,7 +42,7 @@ int cxl_context_init(struct cxl_context *ctx, struct cxl_afu *afu, bool master,
 	spin_lock_init(&ctx->sste_lock);
 	ctx->afu = afu;
 	ctx->master = master;
-	ctx->pid = NULL; /* Set in start work ioctl */
+	ctx->pid = ctx->glpid = NULL; /* Set in start work ioctl */
 	mutex_init(&ctx->mapping_lock);
 	ctx->mapping = mapping;
 
@@ -97,6 +97,12 @@ int cxl_context_init(struct cxl_context *ctx, struct cxl_afu *afu, bool master,
 	ctx->pe = i;
 	ctx->elem = &ctx->afu->spa[i];
 	ctx->pe_inserted = false;
+
+	/*
+	 * take a ref on the afu so that it stays alive at-least till
+	 * this context is reclaimed inside reclaim_ctx.
+	 */
+	cxl_afu_get(afu);
 	return 0;
 }
 
@@ -126,6 +132,18 @@ static int cxl_mmap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	if (ctx->status != STARTED) {
 		mutex_unlock(&ctx->status_mutex);
 		pr_devel("%s: Context not started, failing problem state access\n", __func__);
+		if (ctx->mmio_err_ff) {
+			if (!ctx->ff_page) {
+				ctx->ff_page = alloc_page(GFP_USER);
+				if (!ctx->ff_page)
+					return VM_FAULT_OOM;
+				memset(page_address(ctx->ff_page), 0xff, PAGE_SIZE);
+			}
+			get_page(ctx->ff_page);
+			vmf->page = ctx->ff_page;
+			vma->vm_page_prot = pgprot_cached(vma->vm_page_prot);
+			return 0;
+		}
 		return VM_FAULT_SIGBUS;
 	}
 
@@ -193,9 +211,17 @@ int __detach_context(struct cxl_context *ctx)
 	if (status != STARTED)
 		return -EBUSY;
 
-	WARN_ON(cxl_detach_process(ctx));
+	/* Only warn if we detached while the link was OK.
+	 * If detach fails when hw is down, we don't care.
+	 */
+	WARN_ON(cxl_detach_process(ctx) &&
+		cxl_adapter_link_ok(ctx->afu->adapter));
 	flush_work(&ctx->fault_work); /* Only needed for dedicated process */
+
+	/* release the reference to the group leader and mm handling pid */
 	put_pid(ctx->pid);
+	put_pid(ctx->glpid);
+
 	cxl_ctx_put();
 	return 0;
 }
@@ -253,7 +279,17 @@ static void reclaim_ctx(struct rcu_head *rcu)
 	struct cxl_context *ctx = container_of(rcu, struct cxl_context, rcu);
 
 	free_page((u64)ctx->sstp);
+	if (ctx->ff_page)
+		__free_page(ctx->ff_page);
 	ctx->sstp = NULL;
+	if (ctx->kernelapi)
+		kfree(ctx->mapping);
+
+	if (ctx->irq_bitmap)
+		kfree(ctx->irq_bitmap);
+
+	/* Drop ref to the afu device taken during cxl_context_init */
+	cxl_afu_put(ctx->afu);
 
 	kfree(ctx);
 }

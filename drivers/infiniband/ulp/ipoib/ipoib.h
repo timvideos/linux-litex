@@ -80,7 +80,7 @@ enum {
 	IPOIB_NUM_WC		  = 4,
 
 	IPOIB_MAX_PATH_REC_QUEUE  = 3,
-	IPOIB_MAX_MCAST_QUEUE	  = 3,
+	IPOIB_MAX_MCAST_QUEUE	  = 64,
 
 	IPOIB_FLAG_OPER_UP	  = 0,
 	IPOIB_FLAG_INITIALIZED	  = 1,
@@ -342,7 +342,6 @@ struct ipoib_dev_priv {
 	u16		  pkey;
 	u16		  pkey_index;
 	struct ib_pd	 *pd;
-	struct ib_mr	 *mr;
 	struct ib_cq	 *recv_cq;
 	struct ib_cq	 *send_cq;
 	struct ib_qp	 *qp;
@@ -361,7 +360,7 @@ struct ipoib_dev_priv {
 	unsigned	     tx_head;
 	unsigned	     tx_tail;
 	struct ib_sge	     tx_sge[MAX_SKB_FRAGS + 1];
-	struct ib_send_wr    tx_wr;
+	struct ib_ud_wr      tx_wr;
 	unsigned	     tx_outstanding;
 	struct ib_wc	     send_wc[MAX_SEND_CQE];
 
@@ -528,7 +527,7 @@ static inline void ipoib_build_sge(struct ipoib_dev_priv *priv,
 		priv->tx_sge[i + off].addr = mapping[i + off];
 		priv->tx_sge[i + off].length = skb_frag_size(&frags[i]);
 	}
-	priv->tx_wr.num_sge	     = nr_frags + off;
+	priv->tx_wr.wr.num_sge	     = nr_frags + off;
 }
 
 #ifdef CONFIG_INFINIBAND_IPOIB_DEBUG
@@ -549,6 +548,9 @@ void ipoib_path_iter_read(struct ipoib_path_iter *iter,
 
 int ipoib_mcast_attach(struct net_device *dev, u16 mlid,
 		       union ib_gid *mgid, int set_qkey);
+void ipoib_mcast_remove_list(struct list_head *remove_list);
+void ipoib_check_and_add_mcast_sendonly(struct ipoib_dev_priv *priv, u8 *mgid,
+				struct list_head *remove_list);
 
 int ipoib_init_qp(struct net_device *dev);
 int ipoib_transport_dev_init(struct net_device *dev, struct ib_device *ca);

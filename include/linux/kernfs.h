@@ -266,6 +266,7 @@ static inline bool kernfs_ns_enabled(struct kernfs_node *kn)
 }
 
 int kernfs_name(struct kernfs_node *kn, char *buf, size_t buflen);
+size_t kernfs_path_len(struct kernfs_node *kn);
 char * __must_check kernfs_path(struct kernfs_node *kn, char *buf,
 				size_t buflen);
 void pr_cont_kernfs_name(struct kernfs_node *kn);
@@ -273,6 +274,8 @@ void pr_cont_kernfs_path(struct kernfs_node *kn);
 struct kernfs_node *kernfs_get_parent(struct kernfs_node *kn);
 struct kernfs_node *kernfs_find_and_get_ns(struct kernfs_node *parent,
 					   const char *name, const void *ns);
+struct kernfs_node *kernfs_walk_and_get_ns(struct kernfs_node *parent,
+					   const char *path, const void *ns);
 void kernfs_get(struct kernfs_node *kn);
 void kernfs_put(struct kernfs_node *kn);
 
@@ -332,6 +335,9 @@ static inline bool kernfs_ns_enabled(struct kernfs_node *kn)
 static inline int kernfs_name(struct kernfs_node *kn, char *buf, size_t buflen)
 { return -ENOSYS; }
 
+static inline size_t kernfs_path_len(struct kernfs_node *kn)
+{ return 0; }
+
 static inline char * __must_check kernfs_path(struct kernfs_node *kn, char *buf,
 					      size_t buflen)
 { return NULL; }
@@ -344,6 +350,10 @@ static inline struct kernfs_node *kernfs_get_parent(struct kernfs_node *kn)
 
 static inline struct kernfs_node *
 kernfs_find_and_get_ns(struct kernfs_node *parent, const char *name,
+		       const void *ns)
+{ return NULL; }
+static inline struct kernfs_node *
+kernfs_walk_and_get_ns(struct kernfs_node *parent, const char *path,
 		       const void *ns)
 { return NULL; }
 
@@ -424,6 +434,12 @@ static inline struct kernfs_node *
 kernfs_find_and_get(struct kernfs_node *kn, const char *name)
 {
 	return kernfs_find_and_get_ns(kn, name, NULL);
+}
+
+static inline struct kernfs_node *
+kernfs_walk_and_get(struct kernfs_node *kn, const char *path)
+{
+	return kernfs_walk_and_get_ns(kn, path, NULL);
 }
 
 static inline struct kernfs_node *

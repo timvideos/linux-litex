@@ -148,10 +148,7 @@ static int gemini_rtc_probe(struct platform_device *pdev)
 
 	rtc->rtc_dev = rtc_device_register(pdev->name, dev,
 					   &gemini_rtc_ops, THIS_MODULE);
-	if (likely(IS_ERR(rtc->rtc_dev)))
-		return PTR_ERR(rtc->rtc_dev);
-
-	return 0;
+	return PTR_ERR_OR_ZERO(rtc->rtc_dev);
 }
 
 static int gemini_rtc_remove(struct platform_device *pdev)
@@ -159,7 +156,6 @@ static int gemini_rtc_remove(struct platform_device *pdev)
 	struct gemini_rtc *rtc = platform_get_drvdata(pdev);
 
 	rtc_device_unregister(rtc->rtc_dev);
-	platform_set_drvdata(pdev, NULL);
 
 	return 0;
 }

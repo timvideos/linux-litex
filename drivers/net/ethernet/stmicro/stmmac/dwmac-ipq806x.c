@@ -198,19 +198,19 @@ static int ipq806x_gmac_set_speed(struct ipq806x_gmac *gmac, unsigned int speed)
 	return 0;
 }
 
-static void *ipq806x_gmac_of_parse(struct ipq806x_gmac *gmac)
+static int ipq806x_gmac_of_parse(struct ipq806x_gmac *gmac)
 {
 	struct device *dev = &gmac->pdev->dev;
 
 	gmac->phy_mode = of_get_phy_mode(dev->of_node);
 	if (gmac->phy_mode < 0) {
 		dev_err(dev, "missing phy mode property\n");
-		return ERR_PTR(-EINVAL);
+		return -EINVAL;
 	}
 
 	if (of_property_read_u32(dev->of_node, "qcom,id", &gmac->id) < 0) {
 		dev_err(dev, "missing qcom id property\n");
-		return ERR_PTR(-EINVAL);
+		return -EINVAL;
 	}
 
 	/* The GMACs are called 1 to 4 in the documentation, but to simplify the
@@ -219,13 +219,13 @@ static void *ipq806x_gmac_of_parse(struct ipq806x_gmac *gmac)
 	 */
 	if (gmac->id < 0 || gmac->id > 3) {
 		dev_err(dev, "invalid gmac id\n");
-		return ERR_PTR(-EINVAL);
+		return -EINVAL;
 	}
 
 	gmac->core_clk = devm_clk_get(dev, "stmmaceth");
 	if (IS_ERR(gmac->core_clk)) {
 		dev_err(dev, "missing stmmaceth clk property\n");
-		return gmac->core_clk;
+		return PTR_ERR(gmac->core_clk);
 	}
 	clk_set_rate(gmac->core_clk, 266000000);
 
@@ -234,30 +234,45 @@ static void *ipq806x_gmac_of_parse(struct ipq806x_gmac *gmac)
 							   "qcom,nss-common");
 	if (IS_ERR(gmac->nss_common)) {
 		dev_err(dev, "missing nss-common node\n");
-		return gmac->nss_common;
+		return PTR_ERR(gmac->nss_common);
 	}
 
 	/* Setup the register map for the qsgmii csr registers */
 	gmac->qsgmii_csr = syscon_regmap_lookup_by_phandle(dev->of_node,
 							   "qcom,qsgmii-csr");
-	if (IS_ERR(gmac->qsgmii_csr)) {
+	if (IS_ERR(gmac->qsgmii_csr))
 		dev_err(dev, "missing qsgmii-csr node\n");
-		return gmac->qsgmii_csr;
-	}
 
-	return NULL;
+	return PTR_ERR_OR_ZERO(gmac->qsgmii_csr);
 }
 
-static void *ipq806x_gmac_setup(struct platform_device *pdev)
+static void ipq806x_gmac_fix_mac_speed(void *priv, unsigned int speed)
 {
+	struct ipq806x_gmac *gmac = priv;
+
+	ipq806x_gmac_set_speed(gmac, speed);
+}
+
+static int ipq806x_gmac_probe(struct platform_device *pdev)
+{
+	struct plat_stmmacenet_data *plat_dat;
+	struct stmmac_resources stmmac_res;
 	struct device *dev = &pdev->dev;
 	struct ipq806x_gmac *gmac;
 	int val;
-	void *err;
+	int err;
+
+	val = stmmac_get_platform_resources(pdev, &stmmac_res);
+	if (val)
+		return val;
+
+	plat_dat = stmmac_probe_config_dt(pdev, &stmmac_res.mac);
+	if (IS_ERR(plat_dat))
+		return PTR_ERR(plat_dat);
 
 	gmac = devm_kzalloc(dev, sizeof(*gmac), GFP_KERNEL);
 	if (!gmac)
-		return ERR_PTR(-ENOMEM);
+		return -ENOMEM;
 
 	gmac->pdev = pdev;
 
@@ -285,7 +300,7 @@ static void *ipq806x_gmac_setup(struct platform_device *pdev)
 	default:
 		dev_err(&pdev->dev, "Unsupported PHY mode: \"%s\"\n",
 			phy_modes(gmac->phy_mode));
-		return NULL;
+		return -EINVAL;
 	}
 	regmap_write(gmac->nss_common, NSS_COMMON_GMAC_CTL(gmac->id), val);
 
@@ -304,7 +319,7 @@ static void *ipq806x_gmac_setup(struct platform_device *pdev)
 	default:
 		dev_err(&pdev->dev, "Unsupported PHY mode: \"%s\"\n",
 			phy_modes(gmac->phy_mode));
-		return NULL;
+		return -EINVAL;
 	}
 	regmap_write(gmac->nss_common, NSS_COMMON_CLK_SRC_CTRL, val);
 
@@ -320,37 +335,28 @@ static void *ipq806x_gmac_setup(struct platform_device *pdev)
 			     QSGMII_PHY_RX_SIGNAL_DETECT_EN |
 			     QSGMII_PHY_TX_DRIVER_EN |
 			     QSGMII_PHY_QSGMII_EN |
-			     0x4 << QSGMII_PHY_PHASE_LOOP_GAIN_OFFSET |
-			     0x3 << QSGMII_PHY_RX_DC_BIAS_OFFSET |
-			     0x1 << QSGMII_PHY_RX_INPUT_EQU_OFFSET |
-			     0x2 << QSGMII_PHY_CDR_PI_SLEW_OFFSET |
-			     0xC << QSGMII_PHY_TX_DRV_AMP_OFFSET);
+			     0x4ul << QSGMII_PHY_PHASE_LOOP_GAIN_OFFSET |
+			     0x3ul << QSGMII_PHY_RX_DC_BIAS_OFFSET |
+			     0x1ul << QSGMII_PHY_RX_INPUT_EQU_OFFSET |
+			     0x2ul << QSGMII_PHY_CDR_PI_SLEW_OFFSET |
+			     0xCul << QSGMII_PHY_TX_DRV_AMP_OFFSET);
 	}
 
-	return gmac;
+	plat_dat->has_gmac = true;
+	plat_dat->bsp_priv = gmac;
+	plat_dat->fix_mac_speed = ipq806x_gmac_fix_mac_speed;
+
+	return stmmac_dvr_probe(&pdev->dev, plat_dat, &stmmac_res);
 }
-
-static void ipq806x_gmac_fix_mac_speed(void *priv, unsigned int speed)
-{
-	struct ipq806x_gmac *gmac = priv;
-
-	ipq806x_gmac_set_speed(gmac, speed);
-}
-
-static const struct stmmac_of_data ipq806x_gmac_data = {
-	.has_gmac	= 1,
-	.setup		= ipq806x_gmac_setup,
-	.fix_mac_speed	= ipq806x_gmac_fix_mac_speed,
-};
 
 static const struct of_device_id ipq806x_gmac_dwmac_match[] = {
-	{ .compatible = "qcom,ipq806x-gmac", .data = &ipq806x_gmac_data },
+	{ .compatible = "qcom,ipq806x-gmac" },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, ipq806x_gmac_dwmac_match);
 
 static struct platform_driver ipq806x_gmac_dwmac_driver = {
-	.probe = stmmac_pltfr_probe,
+	.probe = ipq806x_gmac_probe,
 	.remove = stmmac_pltfr_remove,
 	.driver = {
 		.name		= "ipq806x-gmac-dwmac",

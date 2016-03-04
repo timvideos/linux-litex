@@ -120,11 +120,18 @@ int t4vf_wr_mbox_core(struct adapter *adapter, const void *cmd, int size,
 		1, 1, 3, 5, 10, 10, 20, 50, 100
 	};
 
-	u32 v;
+	u32 v, mbox_data;
 	int i, ms, delay_idx;
 	const __be64 *p;
-	u32 mbox_data = T4VF_MBDATA_BASE_ADDR;
 	u32 mbox_ctl = T4VF_CIM_BASE_ADDR + CIM_VF_EXT_MAILBOX_CTRL;
+
+	/* In T6, mailbox size is changed to 128 bytes to avoid
+	 * invalidating the entire prefetch buffer.
+	 */
+	if (CHELSIO_CHIP_VERSION(adapter->params.chip) <= CHELSIO_T5)
+		mbox_data = T4VF_MBDATA_BASE_ADDR;
+	else
+		mbox_data = T6VF_MBDATA_BASE_ADDR;
 
 	/*
 	 * Commands must be multiples of 16 bytes in length and may not be
@@ -619,7 +626,8 @@ int t4vf_get_sge_params(struct adapter *adapter)
 		 */
 		whoami = t4_read_reg(adapter,
 				     T4VF_PL_BASE_ADDR + PL_VF_WHOAMI_A);
-		pf = SOURCEPF_G(whoami);
+		pf = CHELSIO_CHIP_VERSION(adapter->params.chip) <= CHELSIO_T5 ?
+			SOURCEPF_G(whoami) : T6_SOURCEPF_G(whoami);
 
 		s_hps = (HOSTPAGESIZEPF0_S +
 			 (HOSTPAGESIZEPF1_S - HOSTPAGESIZEPF0_S) * pf);

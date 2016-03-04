@@ -1,3 +1,5 @@
+#include <linux/jump_label.h>
+
 /*
 
  x86 function call convention, 64-bit:
@@ -135,9 +137,6 @@ For 32-bit we have the following conventions - kernel is built with
 	movq %rbp, 4*8+\offset(%rsp)
 	movq %rbx, 5*8+\offset(%rsp)
 	.endm
-	.macro SAVE_EXTRA_REGS_RBP offset=0
-	movq %rbp, 4*8+\offset(%rsp)
-	.endm
 
 	.macro RESTORE_EXTRA_REGS offset=0
 	movq 0*8+\offset(%rsp), %r15
@@ -193,12 +192,6 @@ For 32-bit we have the following conventions - kernel is built with
 	.macro RESTORE_C_REGS_EXCEPT_RCX_R11
 	RESTORE_C_REGS_HELPER 1,0,0,1,1
 	.endm
-	.macro RESTORE_RSI_RDI
-	RESTORE_C_REGS_HELPER 0,0,0,0,0
-	.endm
-	.macro RESTORE_RSI_RDI_RDX
-	RESTORE_C_REGS_HELPER 0,0,0,0,1
-	.endm
 
 	.macro REMOVE_PT_GPREGS_FROM_STACK addskip=0
 	subq $-(15*8+\addskip), %rsp
@@ -241,3 +234,16 @@ For 32-bit we have the following conventions - kernel is built with
 
 #endif /* CONFIG_X86_64 */
 
+/*
+ * This does 'call enter_from_user_mode' unless we can avoid it based on
+ * kernel config or using the static jump infrastructure.
+ */
+.macro CALL_enter_from_user_mode
+#ifdef CONFIG_CONTEXT_TRACKING
+#ifdef HAVE_JUMP_LABEL
+	STATIC_JUMP_IF_FALSE .Lafter_call_\@, context_tracking_enabled, def=0
+#endif
+	call enter_from_user_mode
+.Lafter_call_\@:
+#endif
+.endm

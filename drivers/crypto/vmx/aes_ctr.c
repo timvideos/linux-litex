@@ -81,8 +81,9 @@ static int p8_aes_ctr_setkey(struct crypto_tfm *tfm, const u8 *key,
 	struct p8_aes_ctr_ctx *ctx = crypto_tfm_ctx(tfm);
 
 	pagefault_disable();
-	enable_kernel_altivec();
+	enable_kernel_vsx();
 	ret = aes_p8_set_encrypt_key(key, keylen * 8, &ctx->enc_key);
+	disable_kernel_vsx();
 	pagefault_enable();
 
 	ret += crypto_blkcipher_setkey(ctx->fallback, key, keylen);
@@ -99,8 +100,9 @@ static void p8_aes_ctr_final(struct p8_aes_ctr_ctx *ctx,
 	unsigned int nbytes = walk->nbytes;
 
 	pagefault_disable();
-	enable_kernel_altivec();
+	enable_kernel_vsx();
 	aes_p8_encrypt(ctrblk, keystream, &ctx->enc_key);
+	disable_kernel_vsx();
 	pagefault_enable();
 
 	crypto_xor(keystream, src, nbytes);
@@ -113,6 +115,7 @@ static int p8_aes_ctr_crypt(struct blkcipher_desc *desc,
 			    struct scatterlist *src, unsigned int nbytes)
 {
 	int ret;
+	u64 inc;
 	struct blkcipher_walk walk;
 	struct p8_aes_ctr_ctx *ctx =
 		crypto_tfm_ctx(crypto_blkcipher_tfm(desc->tfm));
@@ -130,7 +133,7 @@ static int p8_aes_ctr_crypt(struct blkcipher_desc *desc,
 		ret = blkcipher_walk_virt_block(desc, &walk, AES_BLOCK_SIZE);
 		while ((nbytes = walk.nbytes) >= AES_BLOCK_SIZE) {
 			pagefault_disable();
-			enable_kernel_altivec();
+			enable_kernel_vsx();
 			aes_p8_ctr32_encrypt_blocks(walk.src.virt.addr,
 						    walk.dst.virt.addr,
 						    (nbytes &
@@ -138,9 +141,15 @@ static int p8_aes_ctr_crypt(struct blkcipher_desc *desc,
 						    AES_BLOCK_SIZE,
 						    &ctx->enc_key,
 						    walk.iv);
+			disable_kernel_vsx();
 			pagefault_enable();
 
-			crypto_inc(walk.iv, AES_BLOCK_SIZE);
+			/* We need to update IV mostly for last bytes/round */
+			inc = (nbytes & AES_BLOCK_MASK) / AES_BLOCK_SIZE;
+			if (inc > 0)
+				while (inc--)
+					crypto_inc(walk.iv, AES_BLOCK_SIZE);
+
 			nbytes &= AES_BLOCK_SIZE - 1;
 			ret = blkcipher_walk_done(desc, &walk, nbytes);
 		}
@@ -166,7 +175,7 @@ struct crypto_alg p8_aes_ctr_alg = {
 	.cra_init = p8_aes_ctr_init,
 	.cra_exit = p8_aes_ctr_exit,
 	.cra_blkcipher = {
-			  .ivsize = 0,
+			  .ivsize = AES_BLOCK_SIZE,
 			  .min_keysize = AES_MIN_KEY_SIZE,
 			  .max_keysize = AES_MAX_KEY_SIZE,
 			  .setkey = p8_aes_ctr_setkey,

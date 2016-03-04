@@ -81,7 +81,15 @@ static int hdmi_dai_startup(struct snd_pcm_substream *substream,
 	ret = snd_pcm_hw_constraint_step(substream->runtime, 0,
 					 SNDRV_PCM_HW_PARAM_PERIOD_BYTES, 128);
 	if (ret < 0) {
-		dev_err(dai->dev, "could not apply constraint\n");
+		dev_err(dai->dev, "Could not apply period constraint: %d\n",
+			ret);
+		return ret;
+	}
+	ret = snd_pcm_hw_constraint_step(substream->runtime, 0,
+					 SNDRV_PCM_HW_PARAM_BUFFER_BYTES, 128);
+	if (ret < 0) {
+		dev_err(dai->dev, "Could not apply buffer constraint: %d\n",
+			ret);
 		return ret;
 	}
 
@@ -360,6 +368,8 @@ static int omap_hdmi_audio_probe(struct platform_device *pdev)
 	card->owner = THIS_MODULE;
 	card->dai_link =
 		devm_kzalloc(dev, sizeof(*(card->dai_link)), GFP_KERNEL);
+	if (!card->dai_link)
+		return -ENOMEM;
 	card->dai_link->name = card->name;
 	card->dai_link->stream_name = card->name;
 	card->dai_link->cpu_dai_name = dev_name(ad->dssdev);

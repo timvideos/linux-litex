@@ -91,7 +91,7 @@ static const struct file_operations reset_ops = {
 };
 #endif
 
-static const char *hw_flag_names[NUM_IEEE80211_HW_FLAGS + 1] = {
+static const char *hw_flag_names[] = {
 #define FLAG(F)	[IEEE80211_HW_##F] = #F
 	FLAG(HAS_RATE_CONTROL),
 	FLAG(RX_INCLUDES_FCS),
@@ -122,9 +122,10 @@ static const char *hw_flag_names[NUM_IEEE80211_HW_FLAGS + 1] = {
 	FLAG(CHANCTX_STA_CSA),
 	FLAG(SUPPORTS_CLONED_SKBS),
 	FLAG(SINGLE_SCAN_ON_ALL_BANDS),
-
-	/* keep last for the build bug below */
-	(void *)0x1
+	FLAG(TDLS_WIDER_BW),
+	FLAG(SUPPORTS_AMSDU_IN_AMPDU),
+	FLAG(BEACON_TX_STATUS),
+	FLAG(NEEDS_UNIQUE_STA_ADDR),
 #undef FLAG
 };
 
@@ -144,11 +145,11 @@ static ssize_t hwflags_read(struct file *file, char __user *user_buf,
 	/* fail compilation if somebody adds or removes
 	 * a flag without updating the name array above
 	 */
-	BUILD_BUG_ON(hw_flag_names[NUM_IEEE80211_HW_FLAGS] != (void *)0x1);
+	BUILD_BUG_ON(ARRAY_SIZE(hw_flag_names) != NUM_IEEE80211_HW_FLAGS);
 
 	for (i = 0; i < NUM_IEEE80211_HW_FLAGS; i++) {
 		if (test_bit(i, local->hw.flags))
-			pos += scnprintf(pos, end - pos, "%s",
+			pos += scnprintf(pos, end - pos, "%s\n",
 					 hw_flag_names[i]);
 	}
 
@@ -277,7 +278,6 @@ void debugfs_hw_add(struct ieee80211_local *local)
 	DEBUGFS_STATS_ADD(rx_handlers_queued);
 	DEBUGFS_STATS_ADD(rx_handlers_drop_nullfunc);
 	DEBUGFS_STATS_ADD(rx_handlers_drop_defrag);
-	DEBUGFS_STATS_ADD(rx_handlers_drop_short);
 	DEBUGFS_STATS_ADD(tx_expand_skb_head);
 	DEBUGFS_STATS_ADD(tx_expand_skb_head_cloned);
 	DEBUGFS_STATS_ADD(rx_expand_skb_head_defrag);

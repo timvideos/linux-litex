@@ -33,6 +33,9 @@
 */
 
 #include <linux/errno.h>
+#include <linux/slab.h>
+#include <linux/clk.h>
+#include <linux/clk-provider.h>
 #include "clk-cpu.h"
 
 #define E4210_SRC_CPU		0x0
@@ -97,8 +100,8 @@ static void wait_until_mux_stable(void __iomem *mux_reg, u32 mux_pos,
 static long exynos_cpuclk_round_rate(struct clk_hw *hw,
 			unsigned long drate, unsigned long *prate)
 {
-	struct clk *parent = __clk_get_parent(hw->clk);
-	*prate = __clk_round_rate(parent, drate);
+	struct clk_hw *parent = clk_hw_get_parent(hw);
+	*prate = clk_hw_round_rate(parent, drate);
 	return *prate;
 }
 
@@ -145,6 +148,7 @@ static int exynos_cpuclk_pre_rate_change(struct clk_notifier_data *ndata,
 	unsigned long alt_prate = clk_get_rate(cpuclk->alt_parent);
 	unsigned long alt_div = 0, alt_div_mask = DIV_MASK;
 	unsigned long div0, div1 = 0, mux_reg;
+	unsigned long flags;
 
 	/* find out the divider values to use for clock data */
 	while ((cfg_data->prate * 1000) != ndata->new_rate) {
@@ -153,7 +157,7 @@ static int exynos_cpuclk_pre_rate_change(struct clk_notifier_data *ndata,
 		cfg_data++;
 	}
 
-	spin_lock(cpuclk->lock);
+	spin_lock_irqsave(cpuclk->lock, flags);
 
 	/*
 	 * For the selected PLL clock frequency, get the pre-defined divider
@@ -161,7 +165,7 @@ static int exynos_cpuclk_pre_rate_change(struct clk_notifier_data *ndata,
 	 * the values for DIV_COPY and DIV_HPM dividers need not be set.
 	 */
 	div0 = cfg_data->div0;
-	if (test_bit(CLK_CPU_HAS_DIV1, &cpuclk->flags)) {
+	if (cpuclk->flags & CLK_CPU_HAS_DIV1) {
 		div1 = cfg_data->div1;
 		if (readl(base + E4210_SRC_CPU) & E4210_MUX_HPM_MASK)
 			div1 = readl(base + E4210_DIV_CPU1) &
@@ -182,7 +186,7 @@ static int exynos_cpuclk_pre_rate_change(struct clk_notifier_data *ndata,
 		alt_div = DIV_ROUND_UP(alt_prate, tmp_rate) - 1;
 		WARN_ON(alt_div >= MAX_DIV);
 
-		if (test_bit(CLK_CPU_NEEDS_DEBUG_ALT_DIV, &cpuclk->flags)) {
+		if (cpuclk->flags & CLK_CPU_NEEDS_DEBUG_ALT_DIV) {
 			/*
 			 * In Exynos4210, ATB clock parent is also mout_core. So
 			 * ATB clock also needs to be mantained at safe speed.
@@ -203,13 +207,13 @@ static int exynos_cpuclk_pre_rate_change(struct clk_notifier_data *ndata,
 	writel(div0, base + E4210_DIV_CPU0);
 	wait_until_divider_stable(base + E4210_DIV_STAT_CPU0, DIV_MASK_ALL);
 
-	if (test_bit(CLK_CPU_HAS_DIV1, &cpuclk->flags)) {
+	if (cpuclk->flags & CLK_CPU_HAS_DIV1) {
 		writel(div1, base + E4210_DIV_CPU1);
 		wait_until_divider_stable(base + E4210_DIV_STAT_CPU1,
 				DIV_MASK_ALL);
 	}
 
-	spin_unlock(cpuclk->lock);
+	spin_unlock_irqrestore(cpuclk->lock, flags);
 	return 0;
 }
 
@@ -220,9 +224,10 @@ static int exynos_cpuclk_post_rate_change(struct clk_notifier_data *ndata,
 	const struct exynos_cpuclk_cfg_data *cfg_data = cpuclk->cfg;
 	unsigned long div = 0, div_mask = DIV_MASK;
 	unsigned long mux_reg;
+	unsigned long flags;
 
 	/* find out the divider values to use for clock data */
-	if (test_bit(CLK_CPU_NEEDS_DEBUG_ALT_DIV, &cpuclk->flags)) {
+	if (cpuclk->flags & CLK_CPU_NEEDS_DEBUG_ALT_DIV) {
 		while ((cfg_data->prate * 1000) != ndata->new_rate) {
 			if (cfg_data->prate == 0)
 				return -EINVAL;
@@ -230,20 +235,20 @@ static int exynos_cpuclk_post_rate_change(struct clk_notifier_data *ndata,
 		}
 	}
 
-	spin_lock(cpuclk->lock);
+	spin_lock_irqsave(cpuclk->lock, flags);
 
 	/* select mout_apll as the alternate parent */
 	mux_reg = readl(base + E4210_SRC_CPU);
 	writel(mux_reg & ~(1 << 16), base + E4210_SRC_CPU);
 	wait_until_mux_stable(base + E4210_STAT_CPU, 16, 1);
 
-	if (test_bit(CLK_CPU_NEEDS_DEBUG_ALT_DIV, &cpuclk->flags)) {
+	if (cpuclk->flags & CLK_CPU_NEEDS_DEBUG_ALT_DIV) {
 		div |= (cfg_data->div0 & E4210_DIV0_ATB_MASK);
 		div_mask |= E4210_DIV0_ATB_MASK;
 	}
 
 	exynos_set_safe_div(base, div, div_mask);
-	spin_unlock(cpuclk->lock);
+	spin_unlock_irqrestore(cpuclk->lock, flags);
 	return 0;
 }
 

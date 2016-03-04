@@ -20,10 +20,10 @@
 #include <linux/mfd/dbx500-prcmu.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
+#include <linux/perf/arm_pmu.h>
 #include <linux/regulator/machine.h>
 #include <linux/random.h>
 
-#include <asm/pmu.h>
 #include <asm/mach/map.h>
 
 #include "setup.h"
@@ -154,11 +154,8 @@ static const char * stericsson_dt_platform_compat[] = {
 };
 
 DT_MACHINE_START(U8500_DT, "ST-Ericsson Ux5x0 platform (Device Tree Support)")
-	.smp            = smp_ops(ux500_smp_ops),
 	.map_io		= u8500_map_io,
 	.init_irq	= ux500_init_irq,
-	/* we re-use nomadik timer here */
-	.init_time	= ux500_timer_init,
 	.init_machine	= u8500_init_machine,
 	.init_late	= NULL,
 	.dt_compat      = stericsson_dt_platform_compat,

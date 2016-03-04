@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2015, Intel Corp.
+ * Copyright (C) 2000 - 2016, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -508,7 +508,8 @@ acpi_ex_dump_object(union acpi_operand_object *obj_desc,
 			if (next) {
 				acpi_os_printf("(%s %2.2X)",
 					       acpi_ut_get_object_type_name
-					       (next), next->common.type);
+					       (next),
+					       next->address_space.space_id);
 
 				while (next->address_space.next) {
 					if ((next->common.type ==
@@ -520,7 +521,8 @@ acpi_ex_dump_object(union acpi_operand_object *obj_desc,
 					acpi_os_printf("->%p(%s %2.2X)", next,
 						       acpi_ut_get_object_type_name
 						       (next),
-						       next->common.type);
+						       next->address_space.
+						       space_id);
 
 					if ((next == start) || (next == data)) {
 						acpi_os_printf
@@ -995,9 +997,8 @@ static void acpi_ex_dump_reference_obj(union acpi_operand_object *obj_desc)
 	if (obj_desc->reference.class == ACPI_REFCLASS_NAME) {
 		acpi_os_printf(" %p ", obj_desc->reference.node);
 
-		status =
-		    acpi_ns_handle_to_pathname(obj_desc->reference.node,
-					       &ret_buf);
+		status = acpi_ns_handle_to_pathname(obj_desc->reference.node,
+						    &ret_buf, TRUE);
 		if (ACPI_FAILURE(status)) {
 			acpi_os_printf(" Could not convert name to pathname\n");
 		} else {
