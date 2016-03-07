@@ -565,9 +565,6 @@ _start:
 	tophys	(r31,r10)
 	l.sw	TI_KSP(r31), r1
 
-	l.ori	r4,r0,0x0
-
-
 	/*
 	 * .data contains initialized data,
 	 * .bss contains uninitialized data - clear it up
@@ -583,7 +580,7 @@ clear_bss:
 	l.sw    (0)(r28),r0
 	l.sfltu r28,r30
 	l.bf    1b
-	l.addi  r28,r28,4
+	 l.addi  r28,r28,4
 
 enable_ic:
 	l.jal	_ic_enable
@@ -602,7 +599,7 @@ flush_tlb:
 enable_mmu:
 	/*
 	 * enable dmmu & immu
-	 * SR[5] = 0, SR[6] = 0, 6th and 7th bit of SR set to 0
+	 * SR[5] = 1, SR[6] = 1
 	 */
 	l.mfspr	r30,r0,SPR_SR
 	l.movhi	r28,hi(SPR_SR_DME | SPR_SR_IME)
@@ -778,7 +775,7 @@ _ic_enable:
 	l.andi  r26,r24,SPR_UPR_ICP
 	l.sfeq  r26,r0
 	l.bf	9f
-	l.nop
+	 l.nop
 
 	/* Disable IC */
 	l.mfspr r6,r0,SPR_SR
@@ -810,15 +807,11 @@ _ic_enable:
 	/* Invalidate IC */
 	l.addi  r6,r0,0
 	l.sll   r5,r14,r28
-//        l.mul   r5,r14,r16
-//	l.trap  1
-//	l.addi  r5,r0,IC_SIZE
 1:
 	l.mtspr r0,r6,SPR_ICBIR
 	l.sfne  r6,r5
 	l.bf    1b
-	l.add   r6,r6,r14
- //       l.addi   r6,r6,IC_LINE
+	 l.add   r6,r6,r14
 
 	/* Enable IC */
 	l.mfspr r6,r0,SPR_SR
@@ -844,7 +837,7 @@ _dc_enable:
 	l.andi  r26,r24,SPR_UPR_DCP
 	l.sfeq  r26,r0
 	l.bf	9f
-	l.nop
+	 l.nop
 
 	/* Disable DC */
 	l.mfspr r6,r0,SPR_SR
@@ -880,7 +873,7 @@ _dc_enable:
 	l.mtspr r0,r6,SPR_DCBIR
 	l.sfne  r6,r5
 	l.bf    1b
-	l.add   r6,r6,r14
+	 l.add   r6,r6,r14
 
 	/* Enable DC */
 	l.mfspr r6,r0,SPR_SR
@@ -888,7 +881,7 @@ _dc_enable:
 	l.mtspr r0,r6,SPR_SR
 9:
 	l.jr    r9
-	l.nop
+	 l.nop
 
 /* ===============================================[ page table masks ]=== */
 
