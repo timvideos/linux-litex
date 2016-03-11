@@ -48,29 +48,6 @@ static int openrisc_timer_set_next_event(unsigned long delta,
 	return 0;
 }
 
-static void openrisc_timer_set_mode(enum clock_event_mode mode,
-				    struct clock_event_device *evt)
-{
-	switch (mode) {
-	case CLOCK_EVT_MODE_PERIODIC:
-		pr_debug(KERN_INFO "%s: periodic\n", __func__);
-		BUG();
-		break;
-	case CLOCK_EVT_MODE_ONESHOT:
-		pr_debug(KERN_INFO "%s: oneshot\n", __func__);
-		break;
-	case CLOCK_EVT_MODE_UNUSED:
-		pr_debug(KERN_INFO "%s: unused\n", __func__);
-		break;
-	case CLOCK_EVT_MODE_SHUTDOWN:
-		pr_debug(KERN_INFO "%s: shutdown\n", __func__);
-		break;
-	case CLOCK_EVT_MODE_RESUME:
-		pr_debug(KERN_INFO "%s: resume\n", __func__);
-		break;
-	}
-}
-
 void *tc_base;
 
 /* This is the clock event device based on the OR1K tick timer.
@@ -103,7 +80,6 @@ void openrisc_clockevent_init(void)
 	evt->features = CLOCK_EVT_FEAT_ONESHOT,
 	evt->rating = 300,
 	evt->set_next_event = openrisc_timer_set_next_event,
-	evt->set_mode = openrisc_timer_set_mode,
 
 	evt->cpumask = cpumask_of(cpu);
 
