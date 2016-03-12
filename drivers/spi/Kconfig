@@ -337,12 +337,6 @@ config SPI_MESON_SPIFC
 	  This enables master mode support for the SPIFC (SPI flash
 	  controller) available in Amlogic Meson SoCs.
 
-config SPI_OCSIMPLE
-	tristate "OpenCores Simple SPI Controller"
-	depends on OPENRISC
-	help
-	  Driver for Simple SPI core from OpenCores.org 
-
 config SPI_MT65XX
 	tristate "MediaTek SPI controller"
 	depends on ARCH_MEDIATEK || COMPILE_TEST
@@ -351,6 +345,12 @@ config SPI_MT65XX
 	  If you want to use MediaTek(R) SPI interface,
 	  say Y or M here.If you are not sure, say N.
 	  SPI drivers for Mediatek MT65XX and MT81XX series ARM SoCs.
+
+config SPI_OCSIMPLE
+	tristate "OpenCores Simple SPI Controller"
+	depends on OPENRISC
+	help
+	  Driver for Simple SPI core from OpenCores.org 
 
 config SPI_OC_TINY
 	tristate "OpenCores tiny SPI"

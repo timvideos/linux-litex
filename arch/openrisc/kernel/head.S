@@ -551,8 +551,8 @@ _start:
 	CLEAR_GPR(r31)
 
 #ifdef CONFIG_SMP
-	l.mfspr	r25,r0,SPR_COREID
-	l.sfeq	r25,r0
+	l.mfspr	r26,r0,SPR_COREID
+	l.sfeq	r26,r0
 	l.bnf	secondary_wait
 	 l.nop
 #endif

@@ -527,6 +527,13 @@ config XILINX_VDMA
 	  channels, Memory Mapped to Stream (MM2S) and Stream to
 	  Memory Mapped (S2MM) for the data transfers.
 
+config WISHBONE_STREAMER_DMA
+	bool "Wishbone streamer DMA"
+	select DMA_ENGINE
+	select DMA_VIRTUAL_CHANNELS
+	help
+	  Enable support for Wishbone streamer DMA softcore
+
 config ZX_DMA
 	tristate "ZTE ZX296702 DMA support"
 	depends on ARCH_ZX
@@ -535,22 +542,13 @@ config ZX_DMA
 	help
 	  Support the DMA engine for ZTE ZX296702 platform devices.
 
-config WISHBONE_STREAMER_DMA
-	bool "Wishbone streamer DMA"
-	select DMA_ENGINE
-	select DMA_VIRTUAL_CHANNELS
-	help
-	  Enable support for Wishbone streamer DMA softcore
-
-config DMA_ENGINE
-	bool
-
 # driver files
 source "drivers/dma/bestcomm/Kconfig"
 
 source "drivers/dma/dw/Kconfig"
 
-source "drivers/dma/hsu/Kconfig"
+config DMA_ENGINE
+	bool
 
 source "drivers/dma/sh/Kconfig"
 
