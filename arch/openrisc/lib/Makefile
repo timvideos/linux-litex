@@ -2,4 +2,5 @@
 # Makefile for or32 specific library files..
 #
 
-obj-y  = memset.o string.o delay.o
+obj-y				:= delay.o string.o
+obj-$(CONFIG_OPT_LIB_FUNCTION)	+= memset.o memcpy.o

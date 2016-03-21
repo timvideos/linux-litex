@@ -115,6 +115,67 @@ config OPENRISC_HAVE_INST_LWA_SWA
 
 endmenu
 
+menu "Optimized Lib"
+
+config OPT_LIB_FUNCTION
+	bool "Enable Optimalized lib functions"
+	default y
+	help
+	  Tunes on optimalized library functions (memcpy and memset).
+	  They are optimized for using word memory operations instead of
+          the default byte operations.
+choice
+	prompt "Optimized lib Implementation"
+	default OPT_LIB_WORD_NONALIGNED
+	depends on OPT_LIB_FUNCTION
+
+config OPT_LIB_WORD_NONALIGNED
+	bool "Non-Aligned Word Operations"
+	help
+	  The implementation performs word operations and loop unrolls.
+	  It supports word operations on non-aligned memory but at the cost
+	  of doing shifts and or operations to fix alignement issues.
+
+	  This should be the fasted implementation.
+
+config OPT_LIB_WORD_UNROLL
+	bool "Unrolled Loop Word Operations"
+	help
+	  This implementation performs word operations and loop unrolls.
+	  However, if memory being operated on is not word aligned it will
+	  fall back to using byte operations.
+
+	  This may be as fast as the non-aligned operations if the shift and
+	  or operations to reconstructe alignement issues are slower than the
+	  4 byte memory operations.
+
+	  This should be the 2nd fastest implementation.
+
+config OPT_LIB_WORD
+	bool "Simple Word Operations"
+	help
+	  This implementation performs word operations if data is word aligned
+	  then falls back to byte operations.  It does not do loop unrolling.
+
+	  This should be 3rd fastest implementation.
+
+config OPT_LIB_BYTE_UNROLL
+	bool "Unrolled Loop Byte Operations"
+	help
+	  This implemenation performes Byte operations with loop untolling.
+
+	  This should be the 4th fastest implementation.
+
+config OPT_LIB_BYTE
+	bool "Simple Byte Operations"
+	help
+	  Simple byte operations. No frills but should not have any problem
+	  working on any architecture.
+
+endchoice
+
+endmenu
+
 config NR_CPUS
 	int "Maximum number of CPUs (2-32)"
 	range 2 32
