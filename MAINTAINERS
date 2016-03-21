@@ -8064,6 +8064,7 @@ F:	drivers/of/resolver.c
 
 OPENRISC ARCHITECTURE
 M:	Jonas Bonn <jonas@southpole.se>
+M:	Stefan Kristiansson <stefan.kristiansson@saunalahti.fi>
 W:	http://openrisc.io
 L:	openrisc@lists.librecores.org
 S:	Maintained
