@@ -19,6 +19,8 @@
  */
 
 #ifndef _MC_TEST
+#include <linux/export.h>
+
 #include <linux/string.h>
 #endif
 
@@ -371,3 +373,5 @@ void * memcpy(void *dest, __const void *src, __kernel_size_t n)
 	return dest;
 }
 #endif
+
+EXPORT_SYMBOL(memcpy);
