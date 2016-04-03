@@ -27,6 +27,7 @@ config OPENRISC
 	select HAVE_DEBUG_STACKOVERFLOW
 	select OR1K_PIC
 	select OMPIC if SMP
+	select NO_BOOTMEM
 
 config MMU
 	def_bool y
