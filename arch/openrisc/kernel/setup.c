@@ -250,13 +250,14 @@ void __init detect_unit_config(unsigned long upr, unsigned long mask,
 
 void calibrate_delay(void)
 {
-	const int *val;
+	int val;
 	struct device_node *cpu = NULL;
 	cpu = of_find_compatible_node(NULL, NULL, "opencores,or1200-rtlsvn481");
-	val = of_get_property(cpu, "clock-frequency", NULL);
+	//val = of_get_property(cpu, "clock-frequency", NULL);
+	val = 83333333;
 	if (!val)
 		panic("no cpu 'clock-frequency' parameter in device tree");
-	loops_per_jiffy = *val / HZ;
+	loops_per_jiffy = val / HZ;
 	pr_cont("%lu.%02lu BogoMIPS (lpj=%lu)\n",
 		loops_per_jiffy / (500000 / HZ),
 		(loops_per_jiffy / (5000 / HZ)) % 100, loops_per_jiffy);

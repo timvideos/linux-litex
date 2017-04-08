@@ -31,7 +31,7 @@
 #include <linux/of_fdt.h>
 
 #define tophys(rd,rs)				\
-	l.movhi	rd,hi(-KERNELBASE)		;\
+	l.movhi	rd,hi(-(VIRT_PHYS_OFFSET))		;\
 	l.add	rd,rd,rs
 
 #define CLEAR_GPR(gpr)				\
@@ -498,6 +498,10 @@ _start:
 
 	l.ori	r4,r0,0x0
 
+	/* Setup the exception vector base */
+evbar_setup:
+	l.movhi	r6,hi(PHYSICAL_START)
+	l.mtspr r0,r6,SPR_EVBAR
 
 	/*
 	 * .data contains initialized data,
@@ -561,12 +565,17 @@ enable_mmu:
 	l.nop 5
 
 	/* check fdt header magic word */
+	l.sfeq  r0,r25
+	l.bf    _fdt_notfound
+	 l.nop
+
 	l.lwz	r3,0(r25)	/* load magic from fdt into r3 */
 	l.movhi	r4,hi(OF_DT_HEADER)
 	l.ori	r4,r4,lo(OF_DT_HEADER)
 	l.sfeq	r3,r4
 	l.bf	_fdt_found
 	 l.nop
+_fdt_notfound:
 	/* magic number mismatch, set fdt pointer to null */
 	l.or	r25,r0,r0
 _fdt_found:
@@ -842,13 +851,20 @@ immediate_translation:
 	l.mtspr r2,r5,SPR_DTLBMR_BASE(0)   // set DTLBMR
 
 	/* set up DTLB with no translation for EA <= 0xbfffffff */
-	LOAD_SYMBOL_2_GPR(r6,0xbfffffff)
-	l.sfgeu  r6,r4                     // flag if r6 >= r4 (if 0xbfffffff >= EA)
-	l.bf     1f                        // goto out
-	l.and    r3,r4,r4                  // delay slot :: 24 <- r4 (if flag==1)
+	l.and    r3,r4,r4
 
-	tophys(r3,r4)                      // r3 <- PA
+	LOAD_SYMBOL_2_GPR(r6,PHYSICAL_START)
+	l.sfleu  r4,r6                     // flag if r4 <= r6 (if EA < PHYSICAL_START)
+	l.bf     1f                        // goto out
+	l.nop    	                   // delay slot :: 24 <- r4 (if flag==1)
+
+	LOAD_SYMBOL_2_GPR(r6,PHYSICAL_START+(_end-PAGE_OFFSET))
+	l.sfleu  r4,r6                     // flag if r4 <= r6 (if EA < PHYSICAL+kernel_end)
+	l.bf     2f                        // goto out
+	l.nop    	                   // delay slot :: 24 <- r4 (if flag==1)
 1:
+	tophys(r3,r4)                      // r3 <- PA
+2:
 	l.ori   r3,r3,~(PPN_MASK)          // r3 <- PPN :PPN .xfff - clear up lo(r6) to 0x**** *fff
 	l.movhi r5,hi(DTLB_TR_MASK)        // r5 <- ffff:0000.x000
 	l.ori   r5,r5,lo(DTLB_TR_MASK)     // r5 <- ffff:1111.x330 - apply DTLB_MR_MASK
@@ -935,13 +951,20 @@ earlyearly:
 	 * which run with mmu enabled into entry.S, we might be able to eliminate this.
 	 *
 	 */
-	LOAD_SYMBOL_2_GPR(r6,0x0fffffff)
-	l.sfgeu  r6,r4                     // flag if r6 >= r4 (if 0xb0ffffff >= EA)
-	l.bf     1f                        // goto out
-	l.and    r3,r4,r4                  // delay slot :: 24 <- r4 (if flag==1)
+	l.and    r3,r4,r4
 
-	tophys(r3,r4)                      // r3 <- PA
+	LOAD_SYMBOL_2_GPR(r6,PHYSICAL_START)
+	l.sfleu  r4,r6                     // flag if r4 <= r6 (if EA < PHYSICAL_START)
+	l.bf     1f                        // goto out
+	l.nop    	                   // delay slot :: 24 <- r4 (if flag==1)
+
+	LOAD_SYMBOL_2_GPR(r6,PHYSICAL_START+(_end-PAGE_OFFSET))
+	l.sfleu  r4,r6                     // flag if r4 <= r6 (if EA < PHYSICAL+kernel_end)
+	l.bf     2f                        // goto out
+	l.nop    	                   // delay slot :: 24 <- r4 (if flag==1)
 1:
+	tophys(r3,r4)                      // r3 <- PA
+2:
 	l.ori   r3,r3,~(PPN_MASK)          // r3 <- PPN :PPN .xfff - clear up lo(r6) to 0x**** *fff
 	l.movhi r5,hi(ITLB_TR_MASK)        // r5 <- ffff:0000.x000
 	l.ori   r5,r5,lo(ITLB_TR_MASK)     // r5 <- ffff:1111.x050 - apply ITLB_MR_MASK
@@ -1510,26 +1533,6 @@ ENTRY(_emergency_print_nr)
 #define UART_DIVISOR       SYS_CLK/(16*OR32_CONSOLE_BAUD)
 
 ENTRY(_early_uart_init)
-	l.movhi	r3,hi(UART_BASE_ADD)
-
-	l.addi	r4,r0,0x7
-	l.sb	0x2(r3),r4
-
-	l.addi	r4,r0,0x0
-	l.sb	0x1(r3),r4
-
-	l.addi	r4,r0,0x3
-	l.sb	0x3(r3),r4
-
-	l.lbz	r5,3(r3)
-	l.ori	r4,r5,0x80
-	l.sb	0x3(r3),r4
-	l.addi	r4,r0,((UART_DIVISOR>>8) & 0x000000ff)
-	l.sb	UART_DLM(r3),r4
-	l.addi  r4,r0,((UART_DIVISOR) & 0x000000ff)
-	l.sb	UART_DLL(r3),r4
-	l.sb	0x3(r3),r5
-
 	l.jr	r9
 	l.nop
 
