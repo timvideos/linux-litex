@@ -48,8 +48,19 @@
 #define SYSCALL_SR  (SPR_SR_DME | SPR_SR_IME | SPR_SR_DCE | SPR_SR_ICE | SPR_SR_IEE | SPR_SR_TEE | SPR_SR_SM)
 
 /* ============================================[ tmp store locations ]=== */
+#define TEMPORARY_SETUP			l.mfspr	r0,r0,SPR_EVBAR
+#define TEMPORARY_CLEAR			CLEAR_GPR(r0)
 
 #define SPR_SHADOW_GPR(x)	((x) + SPR_GPR_BASE + 32)
+
+#define EMERGENCY_PRINT_SETUP		TEMPORARY_SETUP
+#define EMERGENCY_PRINT_CLEAR		TEMPORARY_CLEAR
+
+#define EXCEPTION_T_SETUP		TEMPORARY_SETUP
+#define EXCEPTION_T_CLEAR		TEMPORARY_CLEAR
+
+#define EXCEPTION_SETUP		TEMPORARY_SETUP
+#define EXCEPTION_CLEAR		TEMPORARY_CLEAR
 
 /*
  * emergency_print temporary stores
@@ -224,13 +235,16 @@
  */
 
 #define EXCEPTION_HANDLE(handler)				\
+	EXCEPTION_T_SETUP					;\
 	EXCEPTION_T_STORE_GPR30					;\
+	EXCEPTION_T_STORE_GPR10					;\
+	EXCEPTION_T_STORE_SP					;\
+	EXCEPTION_T_CLEAR                                       ;\
 	l.mfspr r30,r0,SPR_ESR_BASE				;\
 	l.andi  r30,r30,SPR_SR_SM				;\
 	l.sfeqi r30,0						;\
-	EXCEPTION_T_STORE_GPR10					;\
 	l.bnf   2f                            /* kernel_mode */	;\
-	 EXCEPTION_T_STORE_SP                 /* delay slot */	;\
+	 l.nop							;\
 1: /* user_mode:   */						;\
 	GET_CURRENT_THREAD_INFO	 				;\
 	tophys  (r30,r10)					;\
@@ -249,13 +263,19 @@
 	l.mfspr r12,r0,SPR_ESR_BASE				;\
 	l.sw    PT_SR(r30),r12					;\
 	/* save r30 */						;\
+	EXCEPTION_T_SETUP					;\
 	EXCEPTION_T_LOAD_GPR30(r12)				;\
+	EXCEPTION_T_CLEAR                                       ;\
 	l.sw	PT_GPR30(r30),r12				;\
 	/* save r10 as was prior to exception */		;\
+	EXCEPTION_T_SETUP					;\
 	EXCEPTION_T_LOAD_GPR10(r12)				;\
+	EXCEPTION_T_CLEAR                                       ;\
 	l.sw	PT_GPR10(r30),r12				;\
 	/* save PT_SP as was prior to exception */		;\
+	EXCEPTION_T_SETUP					;\
 	EXCEPTION_T_LOAD_SP(r12)				;\
+	EXCEPTION_T_CLEAR                                       ;\
 	l.sw	PT_SP(r30),r12					;\
 	/* save exception r4, set r4 = EA */			;\
 	l.sw	PT_GPR4(r30),r4					;\
@@ -292,9 +312,11 @@
  *
  */
 #define UNHANDLED_EXCEPTION(handler)				\
+	EXCEPTION_T_SETUP					;\
 	EXCEPTION_T_STORE_GPR30					;\
 	EXCEPTION_T_STORE_GPR10					;\
 	EXCEPTION_T_STORE_SP					;\
+	EXCEPTION_T_CLEAR					;\
 	/* temporary store r3, r9 into r1, r10 */		;\
 	l.addi	r1,r3,0x0					;\
 	l.addi	r10,r9,0x0					;\
@@ -329,13 +351,19 @@
 	l.mfspr r12,r0,SPR_ESR_BASE				;\
 	l.sw    PT_SR(r30),r12					;\
 	/* save r31 */						;\
+	EXCEPTION_T_SETUP					;\
 	EXCEPTION_T_LOAD_GPR30(r12)				;\
+	EXCEPTION_T_CLEAR					;\
 	l.sw	PT_GPR30(r30),r12					;\
 	/* save r10 as was prior to exception */		;\
+	EXCEPTION_T_SETUP					;\
 	EXCEPTION_T_LOAD_GPR10(r12)				;\
+	EXCEPTION_T_CLEAR					;\
 	l.sw	PT_GPR10(r30),r12					;\
 	/* save PT_SP as was prior to exception */			;\
+	EXCEPTION_T_SETUP					;\
 	EXCEPTION_T_LOAD_SP(r12)				;\
+	EXCEPTION_T_CLEAR					;\
 	l.sw	PT_SP(r30),r12					;\
 	l.sw    PT_GPR13(r30),r13					;\
 	/* --> */						;\
@@ -570,6 +598,10 @@ _start:
 
 	l.ori	r4,r0,0x0
 
+	/* Setup the exception vector base */
+evbar_setup:
+	l.movhi	r6,hi(PHYSICAL_START)
+	l.mtspr r0,r6,SPR_EVBAR
 
 	/*
 	 * .data contains initialized data,
@@ -603,6 +635,7 @@ flush_tlb:
 /* The MMU needs to be enabled before or32_early_setup is called */
 
 enable_mmu:
+	LOAD_SYMBOL_2_GPR(r23, _after_enable_mmu)
 	/*
 	 * enable dmmu & immu
 	 * SR[5] = 0, SR[6] = 0, 6th and 7th bit of SR set to 0
@@ -611,8 +644,10 @@ enable_mmu:
 	l.movhi	r28,hi(SPR_SR_DME | SPR_SR_IME)
 	l.ori	r28,r28,lo(SPR_SR_DME | SPR_SR_IME)
 	l.or	r30,r30,r28
+	l.jr	r23
 	l.mtspr	r0,r30,SPR_SR
 	l.nop
+_after_enable_mmu:
 	l.nop
 	l.nop
 	l.nop
@@ -632,13 +667,20 @@ enable_mmu:
 	// reset the simulation counters
 	l.nop 5
 
+_print_something:
+
 	/* check fdt header magic word */
+	l.sfeq  r0,r25
+	l.bf    _fdt_notfound
+	 l.nop
+
 	l.lwz	r3,0(r25)	/* load magic from fdt into r3 */
 	l.movhi	r4,hi(OF_DT_HEADER)
 	l.ori	r4,r4,lo(OF_DT_HEADER)
 	l.sfeq	r3,r4
 	l.bf	_fdt_found
 	 l.nop
+_fdt_notfound:
 	/* magic number mismatch, set fdt pointer to null */
 	l.or	r25,r0,r0
 _fdt_found:
@@ -965,7 +1007,6 @@ boot_dtlb_miss_handler:
 #define PPN_MASK 0xfffff000
 
 
-	EXCEPTION_STORE_GPR6
 
 #if 0
 	l.mfspr r6,r0,SPR_ESR_BASE	   //
@@ -980,10 +1021,13 @@ boot_dtlb_miss_handler:
 	 * if not in supervisor mode
 	 */
 
+	EXCEPTION_SETUP
 	EXCEPTION_STORE_GPR2
 	EXCEPTION_STORE_GPR3
 	EXCEPTION_STORE_GPR4
 	EXCEPTION_STORE_GPR5
+	EXCEPTION_STORE_GPR6
+	EXCEPTION_CLEAR
 
 	l.mfspr r4,r0,SPR_EEAR_BASE        // get the offending EA
 
@@ -1021,18 +1065,22 @@ immediate_translation:
 	l.and   r5,r5,r3                   // r5 <- PPN :PPN .x330 - we have DTLBTR entry
 	l.mtspr r2,r5,SPR_DTLBTR_BASE(0)   // set DTLBTR
 
+	EXCEPTION_SETUP
 	EXCEPTION_LOAD_GPR6
 	EXCEPTION_LOAD_GPR5
 	EXCEPTION_LOAD_GPR4
 	EXCEPTION_LOAD_GPR3
 	EXCEPTION_LOAD_GPR2
+	EXCEPTION_CLEAR
 
 	l.rfe                              // SR <- ESR, PC <- EPC
 
 exit_with_no_dtranslation:
 	/* EA out of memory or not in supervisor mode */
+	EXCEPTION_SETUP
 	EXCEPTION_LOAD_GPR6
 	EXCEPTION_LOAD_GPR4
+	EXCEPTION_CLEAR
 	l.j	_dispatch_bus_fault
 
 /* ---[ boot itlb miss handler ]----------------------------------------- */
@@ -1057,11 +1105,13 @@ boot_itlb_miss_handler:
 
 
 
+	EXCEPTION_SETUP
 	EXCEPTION_STORE_GPR2
 	EXCEPTION_STORE_GPR3
 	EXCEPTION_STORE_GPR4
 	EXCEPTION_STORE_GPR5
 	EXCEPTION_STORE_GPR6
+	EXCEPTION_CLEAR
 
 #if 0
 	l.mfspr r6,r0,SPR_ESR_BASE         //
@@ -1098,7 +1148,7 @@ earlyearly:
 	 * set up ITLB with no translation for EA <= 0x0fffffff
 	 *
 	 * we need this for head.S mapping (EA = PA). if we move all functions
-	 * which run with mmu enabled into entry.S, we might be able to eliminate this.
+	 * which run with mmu enabled into entry.S, we might be able to eliminate this
 	 *
 	 */
 	LOAD_SYMBOL_2_GPR(r6,0x0fffffff)
@@ -1114,17 +1164,21 @@ earlyearly:
 	l.and   r5,r5,r3                   // r5 <- PPN :PPN .x050 - we have ITLBTR entry
 	l.mtspr r2,r5,SPR_ITLBTR_BASE(0)   // set ITLBTR
 
+	EXCEPTION_SETUP
 	EXCEPTION_LOAD_GPR6
 	EXCEPTION_LOAD_GPR5
 	EXCEPTION_LOAD_GPR4
 	EXCEPTION_LOAD_GPR3
 	EXCEPTION_LOAD_GPR2
+	EXCEPTION_CLEAR
 
 	l.rfe                              // SR <- ESR, PC <- EPC
 
 exit_with_no_itranslation:
+	EXCEPTION_SETUP
 	EXCEPTION_LOAD_GPR4
 	EXCEPTION_LOAD_GPR6
+	EXCEPTION_CLEAR
 	l.j    _dispatch_bus_fault
 	l.nop
 
@@ -1145,9 +1199,11 @@ exit_with_no_itranslation:
 
 	.text
 ENTRY(dtlb_miss_handler)
+	EXCEPTION_SETUP
 	EXCEPTION_STORE_GPR2
 	EXCEPTION_STORE_GPR3
 	EXCEPTION_STORE_GPR4
+	EXCEPTION_CLEAR
 	/*
 	 * get EA of the miss
 	 */
@@ -1210,22 +1266,28 @@ d_pmd_good:
 	l.ori	r4,r3,0x1		// set hardware valid bit: DTBL_MR entry
 	l.mtspr	r2,r4,SPR_DTLBMR_BASE(0)
 
+	EXCEPTION_SETUP
 	EXCEPTION_LOAD_GPR2
 	EXCEPTION_LOAD_GPR3
 	EXCEPTION_LOAD_GPR4
+	EXCEPTION_CLEAR
 	l.rfe
 d_pmd_none:
 d_pte_not_present:
+	EXCEPTION_SETUP
 	EXCEPTION_LOAD_GPR2
 	EXCEPTION_LOAD_GPR3
 	EXCEPTION_LOAD_GPR4
+	EXCEPTION_CLEAR
 	EXCEPTION_HANDLE(_dtlb_miss_page_fault_handler)
 
 /* ==============================================[ ITLB miss handler ]=== */
 ENTRY(itlb_miss_handler)
+	EXCEPTION_SETUP
 	EXCEPTION_STORE_GPR2
 	EXCEPTION_STORE_GPR3
 	EXCEPTION_STORE_GPR4
+	EXCEPTION_CLEAR
 	/*
 	 * get EA of the miss
 	 */
@@ -1305,16 +1367,20 @@ itlb_tr_fill:
 	l.ori	r4,r3,0x1		// set hardware valid bit: ITBL_MR entry
 	l.mtspr	r2,r4,SPR_ITLBMR_BASE(0)
 
+	EXCEPTION_SETUP
 	EXCEPTION_LOAD_GPR2
 	EXCEPTION_LOAD_GPR3
 	EXCEPTION_LOAD_GPR4
+	EXCEPTION_CLEAR
 	l.rfe
 
 i_pmd_none:
 i_pte_not_present:
+	EXCEPTION_SETUP
 	EXCEPTION_LOAD_GPR2
 	EXCEPTION_LOAD_GPR3
 	EXCEPTION_LOAD_GPR4
+	EXCEPTION_CLEAR
 	EXCEPTION_HANDLE(_itlb_miss_page_fault_handler)
 
 /* ==============================================[ boot tlb handlers ]=== */
@@ -1543,10 +1609,12 @@ trampoline_out:
  * POST: caller should be aware that r3, r9 are changed
  */
 ENTRY(_emergency_print)
+	EMERGENCY_PRINT_SETUP
 	EMERGENCY_PRINT_STORE_GPR4
 	EMERGENCY_PRINT_STORE_GPR5
 	EMERGENCY_PRINT_STORE_GPR6
 	EMERGENCY_PRINT_STORE_GPR7
+	EMERGENCY_PRINT_CLEAR
 2:
 	l.lbz	r7,0(r3)
 	l.sfeq	r7,r0
@@ -1577,19 +1645,23 @@ ENTRY(_emergency_print)
 	l.addi	r3,r3,0x1
 
 9:
+	EMERGENCY_PRINT_SETUP
 	EMERGENCY_PRINT_LOAD_GPR7
 	EMERGENCY_PRINT_LOAD_GPR6
 	EMERGENCY_PRINT_LOAD_GPR5
 	EMERGENCY_PRINT_LOAD_GPR4
+	EMERGENCY_PRINT_CLEAR
 	l.jr	r9
 	l.nop
 
 ENTRY(_emergency_print_nr)
+	EMERGENCY_PRINT_SETUP
 	EMERGENCY_PRINT_STORE_GPR4
 	EMERGENCY_PRINT_STORE_GPR5
 	EMERGENCY_PRINT_STORE_GPR6
 	EMERGENCY_PRINT_STORE_GPR7
 	EMERGENCY_PRINT_STORE_GPR8
+	EMERGENCY_PRINT_CLEAR
 
 	l.addi	r8,r0,32		// shift register
 
@@ -1645,11 +1717,13 @@ ENTRY(_emergency_print_nr)
 	l.addi	r8,r8,-0x4
 
 9:
+	EMERGENCY_PRINT_SETUP
 	EMERGENCY_PRINT_LOAD_GPR8
 	EMERGENCY_PRINT_LOAD_GPR7
 	EMERGENCY_PRINT_LOAD_GPR6
 	EMERGENCY_PRINT_LOAD_GPR5
 	EMERGENCY_PRINT_LOAD_GPR4
+	EMERGENCY_PRINT_CLEAR
 	l.jr	r9
 	l.nop
 
