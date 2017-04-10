@@ -725,23 +725,31 @@ KBUILD_CFLAGS	+= -fomit-frame-pointer
 endif
 endif
 
-KBUILD_CFLAGS   += $(call cc-option, -fno-var-tracking-assignments)
+KBUILD_CFLAGS	+= -fno-omit-frame-pointer -fno-optimize-sibling-calls
+#KBUILD_CFLAGS   += $(call cc-option, -fno-var-tracking-assignments)
 
 ifdef CONFIG_DEBUG_INFO
 ifdef CONFIG_DEBUG_INFO_SPLIT
 KBUILD_CFLAGS   += $(call cc-option, -gsplit-dwarf, -g)
 else
-KBUILD_CFLAGS	+= -g
+#KBUILD_CFLAGS	+= -g
 endif
 KBUILD_AFLAGS	+= -Wa,-gdwarf-2
 endif
 ifdef CONFIG_DEBUG_INFO_DWARF4
+KBUILD_AFLAGS	+= -Wa,-gdwarf-4
+KBUILD_AFLAGS	+= -g3
+KBUILD_CFLAGS	+= $(call cc-option, -g3,)
 KBUILD_CFLAGS	+= $(call cc-option, -gdwarf-4,)
+KBUILD_CFLAGS	+= $(call cc-option, -fvar-tracking,)
+KBUILD_CFLAGS	+= $(call cc-option, -fvar-tracking-assignments,)
+KBUILD_CFLAGS	+= $(call cc-option, -gcolumn-info,)
+#KBUILD_CFLAGS	+= $(call cc-option, -ggdb3,)
 endif
 
 ifdef CONFIG_DEBUG_INFO_REDUCED
 KBUILD_CFLAGS 	+= $(call cc-option, -femit-struct-debug-baseonly) \
-		   $(call cc-option,-fno-var-tracking)
+		   $(call cc-option, -fno-var-tracking)
 endif
 
 ifdef CONFIG_FUNCTION_TRACER
