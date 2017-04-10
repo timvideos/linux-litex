@@ -1113,7 +1113,7 @@ static void early_litex_putc(struct uart_port *port, int c)
 	/* Only attempt the iowrite if we didn't timeout */
 	/* write to TXRX_FIFO - 0x0 offset */
 	if (retries)
-		writel(c & 0xff, port->membase);
+		writeb(c & 0xff, port->membase);
 }
 
 static void early_litex_write(struct console *console,

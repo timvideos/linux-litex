@@ -153,7 +153,7 @@ void __init paging_init(void)
 
 	map_ram();
 
-	zone_sizes_init();
+	//zone_sizes_init();
 
 	/* self modifying code ;) */
 	/* Since the old TLB miss handler has been running up until now,
