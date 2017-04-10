@@ -1848,6 +1848,8 @@ EXPORT_SYMBOL(printk);
 
 #else /* CONFIG_PRINTK */
 
+#error "CONFIG_PRINTK Disabled!?"
+
 #define LOG_LINE_MAX		0
 #define PREFIX_MAX		0
 

@@ -46,6 +46,7 @@ static void __iomem * __init earlycon_map(resource_size_t paddr, size_t size)
 	set_fixmap_io(FIX_EARLYCON_MEM_BASE, paddr & PAGE_MASK);
 	base = (void __iomem *)__fix_to_virt(FIX_EARLYCON_MEM_BASE);
 	base += paddr & ~PAGE_MASK;
+#error "Hello!"
 #else
 	base = ioremap(paddr, size);
 #endif

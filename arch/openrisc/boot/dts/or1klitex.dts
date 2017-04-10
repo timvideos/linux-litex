@@ -6,7 +6,7 @@
 	interrupt-parent = <&pic>;
 
 	chosen {
-		bootargs = "console=uart,mmio,0x90000000,115200";
+		bootargs = "earlycon=litex,0xe0000800,115200";
 	};
 
 	memory@0 {
@@ -20,7 +20,7 @@
 		cpu@0 {
 			compatible = "opencores,or1200-rtlsvn481";
 			reg = <0>;
-			clock-frequency = <20000000>;
+			clock-frequency = <50000000>;
 		};
 	};
 

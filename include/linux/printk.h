@@ -142,6 +142,7 @@ struct va_format {
 extern asmlinkage __printf(1, 2)
 void early_printk(const char *fmt, ...);
 #else
+#error "No earlly printk!@?"
 static inline __printf(1, 2) __cold
 void early_printk(const char *s, ...) { }
 #endif

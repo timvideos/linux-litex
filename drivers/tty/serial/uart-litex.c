@@ -1095,6 +1095,46 @@ static int litex_console_setup(struct console *co, char *options)
 	return uart_set_options(&litexport->port, co, baud, parity, bits, flow);
 }
 
+static void early_litex_putc(struct uart_port *port, int c)
+{
+	/*
+	 * Limit how many times we'll spin waiting for TX FIFO status.
+	 * This will prevent lockups if the base address is incorrectly
+	 * set, or any other issue on the UARTLITE.
+	 * This limit is pretty arbitrary, unless we are at about 10 baud
+	 * we'll never timeout on a working UART.
+	 */
+
+	unsigned retries = 1000000;
+	/* read tx status bit - 0x4 offset */
+	while (--retries && (readl(port->membase + 4)))
+		;
+
+	/* Only attempt the iowrite if we didn't timeout */
+	/* write to TXRX_FIFO - 0x0 offset */
+	if (retries)
+		writel(c & 0xff, port->membase);
+}
+
+static void early_litex_write(struct console *console,
+				 const char *s, unsigned n)
+{
+	struct earlycon_device *device = console->data;
+	uart_console_write(&device->port, s, n, early_litex_putc);
+}
+
+static int __init early_litex_setup(struct earlycon_device *device,
+				       const char *options)
+{
+	if (!device->port.membase)
+		return -ENODEV;
+
+	device->con->write = early_litex_write;
+	return 0;
+}
+EARLYCON_DECLARE(litex, early_litex_setup);
+OF_EARLYCON_DECLARE(litex_a, "litex", early_litex_setup);
+
 static struct console litex_console = {
 	.name		= LITEX_SERIAL_NAME,
 	.device		= uart_console_device,
