@@ -898,10 +898,11 @@ immediate_translation:
 	/* Set up DTLB with no translation for direct MMIO access
 	 */
 
-	LOAD_SYMBOL_2_GPR(r6,CSR_REGION_START)
-	l.sfgeu  r4,r6                     // flag if r4 >= CSR_REGION_START
-	l.bf     dtlb_skip_translate       // skip translate
-	l.and    r3,r4,r4		   // delay slot
+//	LOAD_SYMBOL_2_GPR(r6,CSR_REGION_START)
+//	l.sfgeu  r4,r6                     // flag if r4 >= CSR_REGION_START
+//	l.bf     dtlb_skip_translate       // skip translate
+//	l.and    r3,r4,r4		   // delay slot
+//	__fix_to_virt
 
 dtlb_translate:
 	tophys(r3,r4)                      // r3 <- PA
