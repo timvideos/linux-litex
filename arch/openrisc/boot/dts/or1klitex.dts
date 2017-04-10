@@ -6,7 +6,7 @@
 	interrupt-parent = <&pic>;
 
 	chosen {
-		bootargs = "earlycon=litex,0xe0000800,115200";
+		bootargs = "earlycon=litex,0xe0001000,115200";
 	};
 
 	memory@0 {
@@ -35,7 +35,7 @@
 		interrupt-controller;
 	};
 
-	serial0: serial@e0000800 {
+	serial0: serial@e0001000 {
 		compatible = "litex,uart";
 		reg = <0xe0000800 0x100>;
 		interrupts = <0>;
