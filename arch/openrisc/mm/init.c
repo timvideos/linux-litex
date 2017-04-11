@@ -53,6 +53,9 @@ static void __init zone_sizes_init(void)
 {
 	unsigned long zones_size[MAX_NR_ZONES];
 
+	printk(KERN_INFO "%s: &zone_size[%d] == %p\n", __func__,
+	       MAX_NR_ZONES, &zones_size);
+
 	/* Clear the zone sizes */
 	memset(zones_size, 0, sizeof(zones_size));
 
@@ -153,7 +156,9 @@ void __init paging_init(void)
 
 	map_ram();
 
-	//zone_sizes_init();
+	memblock_dump_all();
+
+	zone_sizes_init();
 
 	/* self modifying code ;) */
 	/* Since the old TLB miss handler has been running up until now,

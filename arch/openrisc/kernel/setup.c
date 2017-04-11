@@ -78,6 +78,8 @@ static void __init setup_memory(void)
 	min_low_pfn = ram_start_pfn;
 	max_low_pfn = ram_end_pfn;
 	max_pfn = ram_end_pfn;
+	printk(KERN_INFO "%s: min_low_pfn: %lx max_low_pfn: %lx max_pfn: %lx\n", __func__,
+	       min_low_pfn, max_low_pfn, max_pfn);
 
 	/*
 	 * initialize the boot-time allocator (with low memory only).
@@ -274,6 +276,9 @@ void __init setup_arch(char **cmdline_p)
 	init_mm.end_code = (unsigned long)_etext;
 	init_mm.end_data = (unsigned long)_edata;
 	init_mm.brk = (unsigned long)_end;
+
+	printk(KERN_INFO "start_code:%lx end_code:%lx end_data:%lx brk:%lx\n",
+		init_mm.start_code, init_mm.end_code, init_mm.end_data, init_mm.brk);
 
 #ifdef CONFIG_BLK_DEV_INITRD
 	initrd_start = (unsigned long)&__initrd_start;
