@@ -175,8 +175,8 @@ void __init paging_init(void)
 		unsigned long pa_itlb_miss_handler = __pa(&itlb_miss_handler);
 		unsigned long pa_dtlb_miss_handler = __pa(&dtlb_miss_handler);
 
-		unsigned long *boot_itlb_miss_handler = __va(((*itlb_vector) + ((unsigned long)itlb_vector)) << 2);
-		unsigned long *boot_dtlb_miss_handler = __va(((*dtlb_vector) + ((unsigned long)dtlb_vector)) << 2);
+		unsigned long *boot_itlb_miss_handler = ((*itlb_vector) << 2) + ((unsigned long)itlb_vector);
+		unsigned long *boot_dtlb_miss_handler = ((*dtlb_vector) << 2) + ((unsigned long)dtlb_vector);
 
 		printk(KERN_INFO "itlb_miss_handler va:%p pa:%p (boot:%p)\n", &itlb_miss_handler, (void*)pa_itlb_miss_handler, boot_itlb_miss_handler);
 		printk(KERN_INFO "dtlb_miss_handler va:%p pa:%p (boot:%p)\n", &dtlb_miss_handler, (void*)pa_dtlb_miss_handler, boot_dtlb_miss_handler);
