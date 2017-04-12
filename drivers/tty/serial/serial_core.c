@@ -2727,6 +2727,7 @@ int uart_add_one_port(struct uart_driver *drv, struct uart_port *uport)
 	struct device *tty_dev;
 	int num_groups;
 
+
 	BUG_ON(in_interrupt());
 
 	if (uport->line >= drv->nr)
@@ -2760,8 +2761,10 @@ int uart_add_one_port(struct uart_driver *drv, struct uart_port *uport)
 		spin_lock_init(&uport->lock);
 		lockdep_set_class(&uport->lock, &port_lock_key);
 	}
-	if (uport->cons && uport->dev)
+	printk(KERN_INFO "%s %s %s\n", __FILE__, __func__, uport->cons->name);
+	if (uport->cons && uport->dev) {
 		of_console_check(uport->dev->of_node, uport->cons->name, uport->line);
+	}
 
 	uart_configure_port(drv, state, uport);
 
@@ -2774,6 +2777,7 @@ int uart_add_one_port(struct uart_driver *drv, struct uart_port *uport)
 	uport->tty_groups = kcalloc(num_groups, sizeof(*uport->tty_groups),
 				    GFP_KERNEL);
 	if (!uport->tty_groups) {
+		printk(KERN_INFO "%s %s !uport->tty_groups\n", __FILE__, __func__, uport->cons->name);
 		ret = -ENOMEM;
 		goto out;
 	}

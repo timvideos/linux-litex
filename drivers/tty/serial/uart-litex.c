@@ -51,6 +51,7 @@
 #define LITEX_CONTROL_IE	0x10
 #endif
 
+
 struct litex_reg_ops {
 	u32 (*in)(void __iomem *addr);
 	void (*out)(u32 val, void __iomem *addr);
@@ -123,9 +124,7 @@ static int litex_uart_receive(struct uart_port *port, int stat)
 	if ((stat & (LITEX_STATUS_RXVALID | LITEX_STATUS_OVERRUN
 		     | LITEX_STATUS_FRAME)) == 0)
 		return 0;
-#endif
 
-#if 0 // error TODO
 	/* stats */
 	if (stat & LITEX_STATUS_RXVALID) {
 		port->icount.rx++;
@@ -145,17 +144,20 @@ static int litex_uart_receive(struct uart_port *port, int stat)
 	/* drop byte with parity error if IGNPAR specificed */
 	if (stat & port->ignore_status_mask & LITEX_STATUS_PARITY)
 		stat &= ~LITEX_STATUS_RXVALID;
+#endif
 
 	stat &= port->read_status_mask;
 
+#if 0 // error TODO
 	if (stat & LITEX_STATUS_PARITY)
 		flag = TTY_PARITY;
-
+#endif
 
 	stat &= ~port->ignore_status_mask;
 
+	tty_insert_flip_char(tport, ch, flag);
+#if 0 // error TODO
 	if (stat & LITEX_STATUS_RXVALID)
-		tty_insert_flip_char(tport, ch, flag);
 
 	if (stat & LITEX_STATUS_FRAME)
 		tty_insert_flip_char(tport, 0, TTY_FRAME);
@@ -366,7 +368,7 @@ static int litex_uart_request_port(struct uart_port *port)
 	int ret;
 	printk_once(KERN_INFO "%s %s\n", __FILE__, __func__);
 
-	pr_debug("litex console: port=%p; port->mapbase=%llx\n",
+	pr_info("litex console: port=%p; port->mapbase=%llx\n",
 		 port, (unsigned long long) port->mapbase);
 
 	if (!request_mem_region(port->mapbase, LITEX_UART_REGION, "litex_uart")) {
@@ -549,7 +551,7 @@ static int litex_uart_console_setup(struct console *co, char *options)
 
 	/* Has the device been initialized yet? */
 	if (!port->mapbase) {
-		pr_debug("console on ttyLX%i not present\n", co->index);
+		pr_info("console on ttyLX%i not present\n", co->index);
 		return -ENODEV;
 	}
 
@@ -635,8 +637,10 @@ static struct uart_driver litex_uart_driver = {
 	.major		= 204,
 	.minor		= 187,
 	.nr		= LITEX_NR_UARTS,
-#ifdef CONFIG_SERIAL_LITEX_CONSOLE
+#ifdef CONFIG_SERIAL_UART_LITEX_CONSOLE
 	.cons		= &litex_uart_console,
+#else
+#error "Blah!"
 #endif
 };
 

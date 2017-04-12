@@ -72,7 +72,7 @@ void of_fdt_limit_memory(int limit)
 		val = fdt_getprop(initial_boot_params, memory, "reg", &len);
 		if (len > limit*cell_size) {
 			len = limit*cell_size;
-			pr_debug("Limiting number of entries to %d\n", limit);
+			pr_info("Limiting number of entries to %d\n", limit);
 			fdt_setprop(initial_boot_params, memory, "reg", val,
 					len);
 		}
@@ -255,7 +255,7 @@ static void populate_properties(const void *blob,
 			pprev      = &pp->next;
 			memcpy(pp->value, ps, len - 1);
 			((char *)pp->value)[len - 1] = 0;
-			pr_debug("fixed up name for %s -> %s\n",
+			pr_info("fixed up name for %s -> %s\n",
 				 nodename, (char *)pp->value);
 		}
 	}
@@ -323,7 +323,7 @@ static unsigned int populate_node(const void *blob,
 				strcpy(fn, dad->full_name);
 #ifdef DEBUG
 				if ((strlen(fn) + l + 1) != allocl) {
-					pr_debug("%s: p: %d, l: %d, a: %d\n",
+					pr_info("%s: p: %d, l: %d, a: %d\n",
 						pathp, (int)strlen(fn),
 						l, allocl);
 				}
@@ -478,17 +478,17 @@ static void *__unflatten_device_tree(const void *blob,
 	int size;
 	void *mem;
 
-	pr_debug(" -> unflatten_device_tree()\n");
+	pr_info(" -> unflatten_device_tree()\n");
 
 	if (!blob) {
-		pr_debug("No device tree pointer\n");
+		pr_info("No device tree pointer\n");
 		return NULL;
 	}
 
-	pr_debug("Unflattening device tree:\n");
-	pr_debug("magic: %08x\n", fdt_magic(blob));
-	pr_debug("size: %08x\n", fdt_totalsize(blob));
-	pr_debug("version: %08x\n", fdt_version(blob));
+	pr_info("Unflattening device tree:\n");
+	pr_info("magic: %08x\n", fdt_magic(blob));
+	pr_info("size: %08x\n", fdt_totalsize(blob));
+	pr_info("version: %08x\n", fdt_version(blob));
 
 	if (fdt_check_header(blob)) {
 		pr_err("Invalid device tree blob header\n");
@@ -501,7 +501,7 @@ static void *__unflatten_device_tree(const void *blob,
 		return NULL;
 
 	size = ALIGN(size, 4);
-	pr_debug("  size is %d, allocating...\n", size);
+	pr_info("  size is %d, allocating...\n", size);
 
 	/* Allocate memory for the expanded device tree */
 	mem = dt_alloc(size + 4, __alignof__(struct device_node));
@@ -509,7 +509,7 @@ static void *__unflatten_device_tree(const void *blob,
 
 	*(__be32 *)(mem + size) = cpu_to_be32(0xdeadbeef);
 
-	pr_debug("  unflattening %p...\n", mem);
+	pr_info("  unflattening %p...\n", mem);
 
 	/* Second pass, do actual unflattening */
 	unflatten_dt_nodes(blob, mem, dad, mynodes);
@@ -519,10 +519,10 @@ static void *__unflatten_device_tree(const void *blob,
 
 	if (detached && mynodes) {
 		of_node_set_flag(*mynodes, OF_DETACHED);
-		pr_debug("unflattened tree is detached\n");
+		pr_info("unflattened tree is detached\n");
 	}
 
-	pr_debug(" <- unflatten_device_tree()\n");
+	pr_info(" <- unflatten_device_tree()\n");
 	return mem;
 }
 
@@ -602,7 +602,7 @@ static int __init __reserved_mem_reserve_reg(unsigned long node,
 
 		if (size &&
 		    early_init_dt_reserve_memory_arch(base, size, nomap) == 0)
-			pr_debug("Reserved memory: reserved region for node '%s': base %pa, size %ld MiB\n",
+			pr_info("Reserved memory: reserved region for node '%s': base %pa, size %ld MiB\n",
 				uname, &base, (unsigned long)size / SZ_1M);
 		else
 			pr_info("Reserved memory: failed to reserve memory for node '%s': base %pa, size %ld MiB\n",
@@ -902,7 +902,7 @@ static void __init early_init_dt_check_for_initrd(unsigned long node)
 	int len;
 	const __be32 *prop;
 
-	pr_debug("Looking for initrd properties... ");
+	pr_info("Looking for initrd properties... ");
 
 	prop = of_get_flat_dt_prop(node, "linux,initrd-start", &len);
 	if (!prop)
@@ -916,7 +916,7 @@ static void __init early_init_dt_check_for_initrd(unsigned long node)
 
 	__early_init_dt_declare_initrd(start, end);
 
-	pr_debug("initrd_start=0x%llx  initrd_end=0x%llx\n",
+	pr_info("initrd_start=0x%llx  initrd_end=0x%llx\n",
 		 (unsigned long long)start, (unsigned long long)end);
 }
 #else
@@ -990,12 +990,12 @@ int __init early_init_dt_scan_root(unsigned long node, const char *uname,
 	prop = of_get_flat_dt_prop(node, "#size-cells", NULL);
 	if (prop)
 		dt_root_size_cells = be32_to_cpup(prop);
-	pr_debug("dt_root_size_cells = %x\n", dt_root_size_cells);
+	pr_info("dt_root_size_cells = %x\n", dt_root_size_cells);
 
 	prop = of_get_flat_dt_prop(node, "#address-cells", NULL);
 	if (prop)
 		dt_root_addr_cells = be32_to_cpup(prop);
-	pr_debug("dt_root_addr_cells = %x\n", dt_root_addr_cells);
+	pr_info("dt_root_addr_cells = %x\n", dt_root_addr_cells);
 
 	/* break now */
 	return 1;
@@ -1040,7 +1040,7 @@ int __init early_init_dt_scan_memory(unsigned long node, const char *uname,
 	endp = reg + (l / sizeof(__be32));
 	hotpluggable = of_get_flat_dt_prop(node, "hotpluggable", NULL);
 
-	pr_debug("memory scan node %s, reg size %d,\n", uname, l);
+	pr_info("memory scan node %s, reg size %d,\n", uname, l);
 
 	while ((endp - reg) >= (dt_root_addr_cells + dt_root_size_cells)) {
 		u64 base, size;
@@ -1050,7 +1050,7 @@ int __init early_init_dt_scan_memory(unsigned long node, const char *uname,
 
 		if (size == 0)
 			continue;
-		pr_debug(" - %llx ,  %llx\n", (unsigned long long)base,
+		pr_info(" - %llx ,  %llx\n", (unsigned long long)base,
 		    (unsigned long long)size);
 
 		early_init_dt_add_memory_arch(base, size);
@@ -1072,7 +1072,7 @@ int __init early_init_dt_scan_chosen(unsigned long node, const char *uname,
 	int l;
 	const char *p;
 
-	pr_debug("search \"chosen\", depth: %d, uname: %s\n", depth, uname);
+	pr_info("search \"chosen\", depth: %d, uname: %s\n", depth, uname);
 
 	if (depth != 1 || !data ||
 	    (strcmp(uname, "chosen") != 0 && strcmp(uname, "chosen@0") != 0))
@@ -1103,7 +1103,7 @@ int __init early_init_dt_scan_chosen(unsigned long node, const char *uname,
 #endif
 #endif /* CONFIG_CMDLINE */
 
-	pr_debug("Command line is: %s\n", (char*)data);
+	pr_info("Command line is: %s\n", (char*)data);
 
 	/* break now */
 	return 1;

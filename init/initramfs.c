@@ -133,6 +133,7 @@ static void __init dir_add(const char *name, time_t mtime)
 	if (!de)
 		panic("can't allocate dir_entry buffer");
 	INIT_LIST_HEAD(&de->list);
+	pr_info("%s\n", name);
 	de->name = kstrdup(name, GFP_KERNEL);
 	de->mtime = mtime;
 	list_add(&de->list, &dir_list);
@@ -333,6 +334,7 @@ static int __init do_name(void)
 		return 0;
 	}
 	clean_path(collected, mode);
+	pr_info("%s\n", collected);
 	if (S_ISREG(mode)) {
 		int ml = maybe_link();
 		if (ml >= 0) {
@@ -481,7 +483,7 @@ static char * __init unpack_to_rootfs(char *buf, unsigned long len)
 		}
 		this_header = 0;
 		decompress = decompress_method(buf, len, &compress_name);
-		pr_debug("Detected %s compressed data\n", compress_name);
+		pr_info("Detected %s compressed data\n", compress_name);
 		if (decompress) {
 			int res = decompress(buf, len, NULL, flush_buffer, NULL,
 				   &my_inptr, error);
