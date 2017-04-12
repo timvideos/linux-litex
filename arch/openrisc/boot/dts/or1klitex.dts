@@ -40,4 +40,41 @@
 		reg = <0xe0001000 0x100>;
 		interrupts = <0>;
 	};
+
+	spiflash: spiflash@20000000 {
+		compatible = "mtd-rom";
+		reg = <0x20000000 0x00200000>;
+		bank-width = <4>;
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		// Values in the partition table should be relative to the
+		// flash start address...
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			/* FPGA gateware */
+			partition@0 {
+				label = "gateware";
+				reg = <0x0000000 0x80000>;
+				read-only;
+			};
+
+			/* MiSoC / LiteX BIOS */
+			partition@80000 {
+				label = "bios";
+				reg = <0x00080000 0x8000>;
+				read-only;
+			};
+
+			/* HDMI2USB Firmware (or Linux Kernel?) */
+			partition@88000 {
+				label = "firmware";
+				reg = <0x00088000 0x178000>;
+				read-only;
+			};
+		};
+	};
 };
