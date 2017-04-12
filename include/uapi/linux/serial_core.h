@@ -272,6 +272,6 @@
 #define PORT_MPS2UART	116
 
 /* LITEX UART */
-#define PORT_LITEX	117
+#define PORT_UART_LITEX	117
 
 #endif /* _UAPILINUX_SERIAL_CORE_H */
