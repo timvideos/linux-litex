@@ -81,6 +81,8 @@
 		compatible = "basic-mmio-gpio", "wd,mbl-gpio";
 		reg = <0xe0005000 0x4>;
 		#gpio-cells = <2>;
+		ngpios = <3>;
+		gpio-line-names = "SPI MOSI", "SPI SCLK", "SPI CS_N";
 		gpio-controller;
 		reg-names = "dat";
 		big-endian;
@@ -89,10 +91,28 @@
 		compatible = "basic-mmio-gpio", "wd,mbl-gpio";
 		reg = <0xe0005004 0x4>;
 		#gpio-cells = <2>;
+		ngpios = <1>;
+		gpio-line-names = "SPI MISO";
 		gpio-controller;
 		reg-names = "dat";
 		no-output;
 		big-endian;
+	};
+	spiflash_bitbang_en: gpio-controller@e0005008 {
+		compatible = "basic-mmio-gpio", "wd,mbl-gpio";
+		reg = <0xe0005008 0x4>;
+		#gpio-cells = <2>;
+		ngpios = <1>;
+		gpio-line-names = "SPI BitBang EN";
+		gpio-controller;
+		reg-names = "dat";
+		big-endian;
+
+		spi_bitbang_en {
+			gpio-hog;
+			gpios = <0 0>;
+			output-high;
+		};
 	};
 
         spi {
