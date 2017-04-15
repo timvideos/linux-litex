@@ -38,6 +38,8 @@
 		interrupts = <0>;
 	};
 
+	/* SPI Flash controller
+	 ************************************************************************/
 	spiflash: spiflash@20000000 {
 		compatible = "mtd-rom";
 		reg = <0x20000000 0x00200000>;
@@ -74,6 +76,76 @@
 			};
 		};
 	};
+
+	spiflash_bitbang_out: gpio-controller@e0005000 {
+		compatible = "basic-mmio-gpio", "wd,mbl-gpio";
+		reg = <0xe0005000 0x4>;
+		#gpio-cells = <2>;
+		gpio-controller;
+		reg-names = "dat";
+		big-endian;
+	};
+	spiflash_bitbang_in: gpio-controller@e0005004 {
+		compatible = "basic-mmio-gpio", "wd,mbl-gpio";
+		reg = <0xe0005004 0x4>;
+		#gpio-cells = <2>;
+		gpio-controller;
+		reg-names = "dat";
+		no-output;
+		big-endian;
+	};
+
+        spi {
+                compatible = "spi-gpio";
+                #address-cells = <0x1>;
+                ranges;
+
+                gpio-mosi =	<&spiflash_bitbang_out 0 0>;	// 0x01 on reg0
+                gpio-sck =	<&spiflash_bitbang_out 1 0>;	// 0x02 on reg0
+                cs-gpios = 	<&spiflash_bitbang_out 2 0>;	// 0x03 on reg0
+                gpio-miso = 	<&spiflash_bitbang_in  0 0>;	// 0x01 on reg1
+                num-chipselects = <1>;
+
+                /* clients */
+		m25p16@0 {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			compatible = "spansion,m25p16", "jedec,spi-nor";
+			spi-max-frequency = <40000000>;
+			reg = <0>;
+			//m25p,fast-read;
+
+			// Values in the partition table should be relative to the
+			// flash start address...
+			partitions {
+				compatible = "fixed-partitions";
+				#address-cells = <1>;
+				#size-cells = <1>;
+
+				/* FPGA gateware */
+				partition@0 {
+					label = "gateware";
+					reg = <0x0000000 0x80000>;
+					read-only;
+				};
+
+				/* MiSoC / LiteX BIOS */
+				partition@80000 {
+					label = "bios";
+					reg = <0x00080000 0x8000>;
+					read-only;
+				};
+
+				/* HDMI2USB Firmware (or Linux Kernel?) */
+				partition@88000 {
+					label = "firmware";
+					reg = <0x00088000 0x178000>;
+					read-only;
+				};
+			};
+		};
+        };
+	/************************************************************************/
 
 	aliases {
 		serial0 = &serial0;
