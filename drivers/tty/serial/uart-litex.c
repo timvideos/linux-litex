@@ -31,8 +31,15 @@
 
 #define LITEX_UART_RX		0x00
 #define LITEX_UART_TX		0x00
-
+#define LITEX_UART_TXFULL	0x04
+#define LITEX_UART_RXEMPTY	0x08
+#define LITEX_UART_EV_STATUS	0x0c
+#define LITEX_UART_EV_PENDING	0x10
+#define LITEX_UART_EV_ENABLE	0x14
 #define LITEX_UART_REGION		16
+
+#define LITEX_EV_TX	1
+#define LITEX_EV_RX	2
 
 #if 0 // delete
 #define LITEX_STATUS_RXVALID	0x01
@@ -59,7 +66,7 @@ struct litex_reg_ops {
 
 static u32 litex_inbe32(void __iomem *addr)
 {
-	printk_once(KERN_INFO "%s %s\n", __FILE__, __func__);
+	// printk_once(KERN_INFO "%s %s\n", __FILE__, __func__);
 	return ioread32be(addr);
 }
 
@@ -94,7 +101,7 @@ static const struct litex_reg_ops litex_le = {
 static inline u32 uart_in32(u32 offset, struct uart_port *port)
 {
 	const struct litex_reg_ops *reg_ops = port->private_data;
-	printk_once(KERN_INFO "%s %s\n", __FILE__, __func__);
+	// printk_once(KERN_INFO "%s %s\n", __FILE__, __func__);
 
 	return reg_ops->in(port->membase + offset);
 }
@@ -118,22 +125,29 @@ static int litex_uart_receive(struct uart_port *port, int stat)
 	struct tty_port *tport = &port->state->port;
 	unsigned char ch = 0;
 	char flag = TTY_NORMAL;
-	printk_once(KERN_INFO "%s %s\n", __FILE__, __func__);
+	//printk(KERN_INFO "%s %s %x\n", __FILE__, __func__, stat);
 
 #if 0 // TODO
 	if ((stat & (LITEX_STATUS_RXVALID | LITEX_STATUS_OVERRUN
 		     | LITEX_STATUS_FRAME)) == 0)
 		return 0;
+#endif
+	if ((stat & 1) == 1) {
+		return 0;
+	}
 
-	/* stats */
-	if (stat & LITEX_STATUS_RXVALID) {
+	/* RXEMPTY */
+	if ((stat & 1) == 0) {
 		port->icount.rx++;
 		ch = uart_in32(LITEX_UART_RX, port);
 
+#if 0
 		if (stat & LITEX_STATUS_PARITY)
 			port->icount.parity++;
+#endif
 	}
 
+#if 0 // TODO
 	if (stat & LITEX_STATUS_OVERRUN)
 		port->icount.overrun++;
 
@@ -173,11 +187,14 @@ static int litex_uart_transmit(struct uart_port *port, int stat)
 {
 	struct circ_buf *xmit  = &port->state->xmit;
 
+	//printk(KERN_INFO "%s %s %s\n", __FILE__, __func__, stat);
 #if 0 // TXFULL
-	printk_once(KERN_INFO "%s %s\n", __FILE__, __func__);
 	if (stat & LITEX_STATUS_TXFULL)
 		return 0;
 #endif
+	if (stat & 1) {
+		return 0;
+	}
 
 	if (port->x_char) {
 		uart_out32(port->x_char, LITEX_UART_TX, port);
@@ -203,18 +220,34 @@ static int litex_uart_transmit(struct uart_port *port, int stat)
 static irqreturn_t litex_uart_isr(int irq, void *dev_id)
 {
 	struct uart_port *port = dev_id;
-	int stat, busy, n = 0;
+	int stat, busy, n, r = 0;
 	unsigned long flags;
 
 	printk_once(KERN_INFO "%s %s\n", __FILE__, __func__);
+
+	// Clear the pending IRQs
+	r = uart_in32(LITEX_UART_EV_PENDING, port);
+	//printk(KERN_INFO "%s clearing pending EVs %x\n", __FILE__, r);
+	uart_out32(r, LITEX_UART_EV_PENDING, port);
+
+	busy = 0;
+
 	do {
-		spin_lock_irqsave(&port->lock, flags);
-#if 0 // TODO error
-		stat = uart_in32(LITEX_STATUS, port);
-#endif
-		busy  = litex_uart_receive(port, stat);
-		busy |= litex_uart_transmit(port, stat);
-		spin_unlock_irqrestore(&port->lock, flags);
+		//spin_lock_irqsave(&port->lock, flags);
+		stat = uart_in32(LITEX_UART_RXEMPTY, port);
+		busy = litex_uart_receive(port, stat);
+		//spin_unlock_irqrestore(&port->lock, flags);
+		n++;
+	} while (busy);
+
+	busy = 0;
+
+	// tx
+	do {
+		//spin_lock_irqsave(&port->lock, flags);
+		stat = uart_in32(LITEX_UART_TXFULL, port);
+		busy = litex_uart_transmit(port, stat);
+		//spin_unlock_irqrestore(&port->lock, flags);
 		n++;
 	} while (busy);
 
@@ -236,10 +269,13 @@ static unsigned int litex_uart_tx_empty(struct uart_port *port)
 	spin_lock_irqsave(&port->lock, flags);
 #if 0 // TODO error
 	ret = uart_in32(LITEX_STATUS, port);
+#else
+	ret = uart_in32(LITEX_UART_TXFULL, port);
 #endif
 	spin_unlock_irqrestore(&port->lock, flags);
 
-	return 0; // TODO - ret & LITEX_STATUS_TXEMPTY ? TIOCSER_TEMT : 0;
+	return 0; // TIOCSER_TEMT; // TODO - ret & LITEX_STATUS_TXEMPTY ? TIOCSER_TEMT : 0;
+	// return (ret & 1) ? TIOCSER_TEMT : 0;
 }
 
 static unsigned int litex_uart_get_mctrl(struct uart_port *port)
@@ -262,9 +298,12 @@ static void litex_uart_stop_tx(struct uart_port *port)
 
 static void litex_uart_start_tx(struct uart_port *port)
 {
-	printk_once(KERN_INFO "%s %s\n", __FILE__, __func__);
+	// printk_once(KERN_INFO "%s %s\n", __FILE__, __func__);
 #if 0 // TODO error
 	litex_uart_transmit(port, uart_in32(LITEX_STATUS, port));
+#else
+	// litex_uart_transmit(port, uart_in32(LITEX_UART_TXFULL, port));
+	litex_uart_transmit(port, 0);
 #endif
 }
 
@@ -280,19 +319,50 @@ static void litex_uart_stop_rx(struct uart_port *port)
 
 static void litex_uart_break_ctl(struct uart_port *port, int ctl)
 {
-	printk_once(KERN_INFO "%s %s\n", __FILE__, __func__);
+	// printk_once(KERN_INFO "%s %s\n", __FILE__, __func__);
 	/* N/A */
 }
 
 static int litex_uart_startup(struct uart_port *port)
 {
 	int ret;
-	printk_once(KERN_INFO "%s %s\n", __FILE__, __func__);
+	unsigned int r;
+	// printk_once(KERN_INFO "%s %s\n", __FILE__, __func__);
 
-	ret = request_irq(port->irq, litex_uart_isr, IRQF_SHARED | IRQF_TRIGGER_RISING,
+	printk(KERN_INFO "%s requested irq %d\n", __FILE__, port->irq);
+
+#if 1 // TODO enable IRQ and ISR
+	ret = request_irq(port->irq, litex_uart_isr, IRQF_TRIGGER_LOW /* IRQF_SHARED */ /* IRQF_TRIGGER_RISING */,
 			  "litex_uart", port);
-	if (ret)
+	printk(KERN_INFO "%s ret %d\n", __FILE__, ret);
+	if (ret) {
+		// printk(KERN_INFO "%s ret %d\n", __FILE__, ret);
+		if (ret == -22) {
+			printk(KERN_INFO "%s %d -EINVAL\n", __FILE__, __LINE__);
+		}
 		return ret;
+	}
+#endif
+
+	r = uart_in32(LITEX_UART_TXFULL, port);
+	printk(KERN_INFO "%s TXFULL %x\n", __FILE__, r);
+	r = uart_in32(LITEX_UART_RXEMPTY, port);
+	printk(KERN_INFO "%s RXEMPTY %x\n", __FILE__, r);
+	r = uart_in32(LITEX_UART_EV_STATUS, port);
+	printk(KERN_INFO "%s EV_STATUS %x\n", __FILE__, r);
+	r = uart_in32(LITEX_UART_EV_PENDING, port);
+	if (r != 0) {
+		printk(KERN_INFO "%s clearing pending EVs\n", __FILE__);
+		uart_out32(r, LITEX_UART_EV_PENDING, port);
+	}
+
+	printk(KERN_INFO "%s EV_PENDING %x\n", __FILE__, r);
+	r = uart_in32(LITEX_UART_EV_ENABLE, port);
+	printk(KERN_INFO "%s EV_ENABLE %x\n", __FILE__, r);
+	if (r == 0) {
+		printk(KERN_INFO "%s enabling EV\n", __FILE__);
+		uart_out32(0x3, LITEX_UART_EV_ENABLE, port);
+	}
 
 #if 0 // TODO error
 	uart_out32(LITEX_CONTROL_RST_RX | LITEX_CONTROL_RST_TX,
@@ -414,7 +484,9 @@ static int litex_uart_verify_port(struct uart_port *port, struct serial_struct *
 #ifdef CONFIG_CONSOLE_POLL
 static int litex_uart_get_poll_char(struct uart_port *port)
 {
-	printk_once(KERN_INFO "%s %s\n", __FILE__, __func__);
+	// printk_once(KERN_INFO "%s %s\n", __FILE__, __func__);
+
+	return NO_POLL_CHAR; // hack - delete me
 
 #if 0 // TODO RX
 	if (!(uart_in32(LITEX_STATUS, port) & LITEX_STATUS_RXVALID))
@@ -426,11 +498,16 @@ static int litex_uart_get_poll_char(struct uart_port *port)
 
 static void litex_uart_put_poll_char(struct uart_port *port, unsigned char ch)
 {
-	printk_once(KERN_INFO "%s %s\n", __FILE__, __func__);
+	// printk_once(KERN_INFO "%s %s\n", __FILE__, __func__);
 
 #if 0 // TODO TXFULL
 	while (uart_in32(LITEX_STATUS, port) & LITEX_STATUS_TXFULL)
 		cpu_relax();
+#else
+	// while (uart_in32(LITEX_UART_TXFULL, port) & 1)
+		// cpu_relax();
+
+	// msleep(10);
 #endif
 
 	/* write char to device */
@@ -489,6 +566,20 @@ static void litex_uart_console_wait_tx(struct uart_port *port)
 		}
 		cpu_relax();
 	}
+#else
+	while (1) {
+		val = uart_in32(LITEX_UART_TXFULL, port);
+		if ((val & 1) == 0)
+			break;
+		if (time_after(jiffies, timeout)) {
+			dev_warn(port->dev,
+				 "timeout waiting for TX buffer empty\n");
+			break;
+		}
+		cpu_relax();
+	}
+
+	// msleep(1);
 #endif
 }
 
@@ -760,9 +851,14 @@ static int litex_uart_probe(struct platform_device *pdev)
 	if (!res)
 		return -ENODEV;
 
+	printk_once(KERN_INFO "%s %s %d\n", __FILE__, __func__, __LINE__);
+
+	// irq 0 is valid on openrisc
 	irq = platform_get_irq(pdev, 0);
-	if (irq <= 0)
+	if (irq < 0)
 		return -ENXIO;
+
+	printk_once(KERN_INFO "%s %s %d\n", __FILE__, __func__, __LINE__);
 
 	return litex_uart_assign(&pdev->dev, id, res->start, irq);
 }

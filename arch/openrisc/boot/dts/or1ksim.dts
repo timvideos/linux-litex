@@ -5,14 +5,6 @@
 	#size-cells = <1>;
 	interrupt-parent = <&pic>;
 
-	aliases {
-	};
-
-	chosen {
-		bootargs = "console=uart,mmio,0x90000000,115200";
-		stdout-path = "serial0";
-	};
-
 	memory@0 {
 		device_type = "memory";
 		reg = <0x00000000 0x02000000>;

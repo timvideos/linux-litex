@@ -1682,6 +1682,7 @@ config SERIAL_UART_LITEX
 	depends on HAS_IOMEM
 	depends on OF
 	select SERIAL_CORE
+	select CONSOLE_POLL
 	help
 	  Say Y here if you want to use the Enjoy-Digital UART Lite-X serial
 	  controller.
