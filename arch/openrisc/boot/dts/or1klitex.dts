@@ -165,7 +165,117 @@
 			};
 		};
         };
+
+
 	/************************************************************************/
+
+	mmcflash_bitbang_out: gpio-controller@e0015000 {
+		compatible = "basic-mmio-gpio", "wd,mbl-gpio";
+		reg = <0xe0015000 0x4>;
+		#gpio-cells = <2>;
+		ngpios = <3>;
+		gpio-line-names = "SPI MOSI", "SPI SCLK", "SPI CS_N";
+		gpio-controller;
+		reg-names = "dat";
+		big-endian;
+	};
+	mmcflash_bitbang_in: gpio-controller@e0015004 {
+		compatible = "basic-mmio-gpio", "wd,mbl-gpio";
+		reg = <0xe0015004 0x4>;
+		#gpio-cells = <2>;
+		ngpios = <1>;
+		gpio-line-names = "SPI MISO";
+		gpio-controller;
+		reg-names = "dat";
+		no-output;
+		big-endian;
+	};
+	mmcflash_bitbang_en: gpio-controller@e0015008 {
+		compatible = "basic-mmio-gpio", "wd,mbl-gpio";
+		reg = <0xe0015008 0x4>;
+		#gpio-cells = <2>;
+		ngpios = <1>;
+		gpio-line-names = "SPI BitBang EN";
+		gpio-controller;
+		reg-names = "dat";
+		big-endian;
+
+		mmc_bitbang_en {
+			gpio-hog;
+			gpios = <0 0>;
+			output-high;
+		};
+	};
+
+        mmc-spi {
+                compatible = "spi-gpio";
+                #address-cells = <0x1>;
+                ranges;
+
+                gpio-mosi =	<&mmcflash_bitbang_out 0 0>;	// 0x01 on reg0
+                gpio-sck =	<&mmcflash_bitbang_out 1 0>;	// 0x02 on reg0
+                cs-gpios = 	<&mmcflash_bitbang_out 2 0>;	// 0x03 on reg0
+                gpio-miso = 	<&mmcflash_bitbang_in  0 0>;	// 0x01 on reg1
+                num-chipselects = <1>;
+
+                /* clients */
+		mmc-slot@0 {
+			compatible = "fsl,mpc8323rdb-mmc-slot",
+				     "mmc-spi-slot";
+			reg = <0>;
+			//gpios = <&qe_pio_d 14 1
+			//	 &qe_pio_d 15 0>;	// card detect, write protect
+			voltage-ranges = <3300 3300>;
+			spi-max-frequency = <50000000>;
+			no-sdio;
+			no-sd;
+			//interrupts = <42>;
+			//interrupt-parent = <&PIC>;
+			mmccard: mmccard@0 {
+				reg = <0>;
+				compatible = "mmc-card";
+			};
+		};
+        };
+
+
+	/************************************************************************/
+
+//	i2c_bitbang_out: gpio-controller@e0008800 {
+//		compatible = "basic-mmio-gpio", "wd,mbl-gpio";
+//		reg = <0xe0008804 0x4>;
+//		#gpio-cells = <2>;
+//		gpio-controller;
+//		reg-names = "set", "dat", "dirout";
+//		no-output;
+//		big-endian;
+//	};
+//	i2c_bitbang_in: gpio-controller@e0008804 {
+//		compatible = "basic-mmio-gpio", "wd,mbl-gpio";
+//		reg = <0xe0008804 0x4>;
+//		#gpio-cells = <2>;
+//		gpio-controller;
+//		reg-names = "dat";
+//		no-output;
+//		big-endian;
+//	};
+//
+//	i2c@0 {
+//		compatible = "i2c-gpio";
+//		gpios = <&i2c_bitbang 23 0 /* sda */
+//			 &i2c_bitbang 24 0 /* scl */
+//			>;
+//		i2c-gpio,sda-open-drain;
+//		i2c-gpio,scl-output-only;
+//		i2c-gpio,delay-us = <2>;        /* ~100 kHz */
+//		#address-cells = <1>;
+//		#size-cells = <0>;
+//
+//		rv3029c2@56 {
+//			compatible = "rv3029c2";
+//			reg = <0x56>;
+//		};
+//	};
 
 	aliases {
 		serial0 = &serial0;

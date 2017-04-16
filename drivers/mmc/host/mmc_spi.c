@@ -1301,6 +1301,7 @@ static int mmc_spi_probe(struct spi_device *spi)
 	struct mmc_host		*mmc;
 	struct mmc_spi_host	*host;
 	int			status;
+	int 			ret;
 	bool			has_ro = false;
 
 	/* We rely on full duplex transfers, mostly to reduce
@@ -1363,6 +1364,10 @@ static int mmc_spi_probe(struct spi_device *spi)
 	mmc->f_max = spi->max_speed_hz;
 
 	host = mmc_priv(mmc);
+	ret = mmc_of_parse(mmc);
+	if (ret)
+		goto fail_nobuf1;
+
 	host->mmc = mmc;
 	host->spi = spi;
 
@@ -1431,6 +1436,7 @@ static int mmc_spi_probe(struct spi_device *spi)
 	if (host->pdata) {
 		mmc->caps |= host->pdata->caps;
 		mmc->caps2 |= host->pdata->caps2;
+		dev_info(&spi->dev, "SD/MMC host caps: %x %x\n", mmc->caps, mmc->caps2);
 	}
 
 	status = mmc_add_host(mmc);

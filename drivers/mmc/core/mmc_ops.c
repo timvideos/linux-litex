@@ -409,10 +409,14 @@ int mmc_spi_set_crc(struct mmc_host *host, int use_crc)
 	cmd.flags = MMC_RSP_SPI_R1;
 	cmd.arg = use_crc;
 
+	if (host->use_spi_crc == use_crc)
+		return 0;
+
 	err = mmc_wait_for_cmd(host, &cmd, 0);
-	if (!err)
-		host->use_spi_crc = use_crc;
-	return err;
+	if (err && use_crc)
+		return err;
+	host->use_spi_crc = use_crc;
+	return 0;
 }
 
 static int mmc_switch_status_error(struct mmc_host *host, u32 status)

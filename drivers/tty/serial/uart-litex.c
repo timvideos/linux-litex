@@ -173,8 +173,8 @@ static int litex_uart_transmit(struct uart_port *port, int stat)
 {
 	struct circ_buf *xmit  = &port->state->xmit;
 
-	printk_once(KERN_INFO "%s %s\n", __FILE__, __func__);
 #if 0 // TXFULL
+	printk_once(KERN_INFO "%s %s\n", __FILE__, __func__);
 	if (stat & LITEX_STATUS_TXFULL)
 		return 0;
 #endif
