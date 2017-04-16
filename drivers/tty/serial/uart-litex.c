@@ -298,13 +298,11 @@ static void litex_uart_stop_tx(struct uart_port *port)
 
 static void litex_uart_start_tx(struct uart_port *port)
 {
-	// printk_once(KERN_INFO "%s %s\n", __FILE__, __func__);
-#if 0 // TODO error
-	litex_uart_transmit(port, uart_in32(LITEX_STATUS, port));
-#else
-	// litex_uart_transmit(port, uart_in32(LITEX_UART_TXFULL, port));
-	litex_uart_transmit(port, 0);
-#endif
+	int busy, stat = 0;
+	do {
+		stat = uart_in32(LITEX_UART_TXFULL, port);
+		busy = litex_uart_transmit(port, stat);
+	} while (busy);
 }
 
 static void litex_uart_stop_rx(struct uart_port *port)
