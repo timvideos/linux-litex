@@ -139,10 +139,10 @@ static int litex_uart_receive(struct uart_port *port, int stat)
 	port->icount.rx++;
 	ch = uart_in32(LITEX_UART_RX, port);
 
-	printk(KERN_INFO "%s %s %c\n", __FILE__, __func__, ch);
+	//printk(KERN_INFO "%s %s %c\n", __FILE__, __func__, ch);
 
-	stat &= port->read_status_mask;
-	stat &= ~port->ignore_status_mask;
+	//stat &= port->read_status_mask;
+	//stat &= ~port->ignore_status_mask;
 
 	tty_insert_flip_char(tport, ch, flag);
 	return 1;
@@ -217,12 +217,12 @@ static irqreturn_t litex_uart_isr(int irq, void *dev_id)
 	} while (busy);
 
 	/* work done? */
-	if (n > 1) {
-		tty_flip_buffer_push(&port->state->port);
-		return IRQ_HANDLED;
-	} else {
-		return IRQ_NONE;
-	}
+	tty_flip_buffer_push(&port->state->port);
+	return IRQ_HANDLED;
+//	if (n >= 1) {
+//	} else {
+//		return IRQ_NONE;
+//	}
 }
 
 static unsigned int litex_uart_tx_empty(struct uart_port *port)
