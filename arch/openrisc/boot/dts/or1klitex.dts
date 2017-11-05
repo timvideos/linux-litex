@@ -46,6 +46,16 @@
 		interrupts = <2>;
 	};
 
+	mac0: mac@e0007800 {
+		compatible = "litex,liteeth";
+		reg = <CSR_ETHMAC_BASE 0x7c
+			CSR_ETHPHY_BASE 0x0a
+			ETHMAC_BASE 0x2000>;
+		interrupts = <3>;
+		tx-fifo-depth = <2>;
+		rx-fifo-depth = <2>;
+        };
+
 	leds {
 		compatible = "gpio-leds";
 
