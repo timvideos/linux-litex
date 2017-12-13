@@ -31,7 +31,7 @@
 #include <linux/of_fdt.h>
 
 #define tophys(rd,rs)				\
-	l.movhi	rd,hi(-KERNELBASE)		;\
+	l.movhi	rd,hi(-(VIRT_PHYS_OFFSET))	;\
 	l.add	rd,rd,rs
 
 #define CLEAR_GPR(gpr)				\
