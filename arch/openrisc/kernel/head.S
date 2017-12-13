@@ -95,7 +95,7 @@
 #endif
 
 /*
- * TLB miss handlers temorary stores
+ * TLB miss handlers temporary stores
  */
 #ifdef CONFIG_OPENRISC_HAVE_SHADOW_GPRS
 #define EXCEPTION_STORE_GPR2		l.mtspr r0,r2,SPR_SHADOW_GPR(2)
@@ -198,8 +198,8 @@
  *
  * PRMS: handler	- a function to jump to. it has to save the
  *			remaining registers to kernel stack, call
- *			appropriate arch-independant exception handler
- *			and finaly jump to ret_from_except
+ *			appropriate arch-independent exception handler
+ *			and finally jump to ret_from_except
  *
  * PREQ: unchanged state from the time exception happened
  *
@@ -218,7 +218,7 @@
  *
  * NOTE: this function is not reentrant per se. reentrancy is guaranteed
  *       by processor disabling all exceptions/interrupts when exception
- *	 accours.
+ *	 occurs.
  *
  * OPTM: no need to make it so wasteful to extract ksp when in user mode
  */
@@ -1662,7 +1662,7 @@ ENTRY(_emergency_print_nr)
  * before Linux gets the early serial going.
  *
  * Furthermore, you'll have to make sure you set the
- * UART_DEVISOR correctly according to the system
+ * UART_DIVISOR correctly according to the system
  * clock rate.
  *
  *
