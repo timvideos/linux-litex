@@ -42,7 +42,12 @@
 	l.ori   gpr,gpr,lo(symbol)
 
 
-#define UART_BASE_ADD      0x90000000
+#define CSR_REGION_START	0xe0000000
+#define CSR_UART_BASE_ADDR      0xe0001000
+#define CSR_UART_RXTX_ADDR	0xe0001000
+#define CSR_UART_RXTX_OFFSET	(CSR_UART_RXTX_ADDR-CSR_UART_BASE_ADDR)
+#define CSR_UART_TXFULL_ADDR 	0xe0001004
+#define CSR_UART_TXFULL_OFFSET	(CSR_UART_TXFULL_ADDR-CSR_UART_BASE_ADDR)
 
 #define EXCEPTION_SR  (SPR_SR_DME | SPR_SR_IME | SPR_SR_DCE | SPR_SR_ICE | SPR_SR_SM)
 #define SYSCALL_SR  (SPR_SR_DME | SPR_SR_IME | SPR_SR_DCE | SPR_SR_ICE | SPR_SR_IEE | SPR_SR_TEE | SPR_SR_SM)
@@ -1621,29 +1626,23 @@ ENTRY(_emergency_print)
 	EMERGENCY_PRINT_STORE_GPR7
 	EMERGENCY_PRINT_CLEAR
 2:
-	l.lbz	r7,0(r3)
-	l.sfeq	r7,r0
+	l.lbz	r6,0(r3)
+	l.sfeq	r6,r0
 	l.bf	9f
-	l.nop
+	 l.nop
 
-// putc:
-	l.movhi r4,hi(UART_BASE_ADD)
-
-	l.addi  r6,r0,0x20
-1:      l.lbz   r5,5(r4)
-	l.andi  r5,r5,0x20
-	l.sfeq  r5,r6
+	/* -- putc -- */
+	LOAD_SYMBOL_2_GPR(r4, CSR_UART_BASE_ADDR)
+1:
+	/* Check the FIFO isn't full */
+	l.lbz	r5,CSR_UART_TXFULL_OFFSET(r4)
+	l.sfeq  r0,r5
 	l.bnf   1b
-	l.nop
+	 l.nop
 
-	l.sb    0(r4),r7
-
-	l.addi  r6,r0,0x60
-1:      l.lbz   r5,5(r4)
-	l.andi  r5,r5,0x60
-	l.sfeq  r5,r6
-	l.bnf   1b
-	l.nop
+	/* Write the byte to the UART */
+	l.sb    CSR_UART_RXTX_OFFSET(r4),r6
+	/* -- end putc -- */
 
 	/* next character */
 	l.j	2b
@@ -1698,24 +1697,19 @@ ENTRY(_emergency_print_nr)
 
 8:
 	l.addi	r7,r7,0x30
-// putc:
-	l.movhi r4,hi(UART_BASE_ADD)
 
-	l.addi  r6,r0,0x20
-1:      l.lbz   r5,5(r4)
-	l.andi  r5,r5,0x20
-	l.sfeq  r5,r6
+	/* -- putc -- */
+	LOAD_SYMBOL_2_GPR(r4, CSR_UART_BASE_ADDR)
+1:
+	/* Check the FIFO isn't full */
+	l.lbz	r5,CSR_UART_TXFULL_OFFSET(r4)
+	l.sfeq  r0,r5
 	l.bnf   1b
-	l.nop
+	 l.nop
 
-	l.sb    0(r4),r7
-
-	l.addi  r6,r0,0x60
-1:      l.lbz   r5,5(r4)
-	l.andi  r5,r5,0x60
-	l.sfeq  r5,r6
-	l.bnf   1b
-	l.nop
+	/* Write the byte to the UART */
+	l.sb    CSR_UART_RXTX_OFFSET(r4),r7
+	/* -- end putc -- */
 
 	/* next character */
 	l.j	2b
@@ -1755,26 +1749,6 @@ ENTRY(_emergency_print_nr)
 #define UART_DIVISOR       SYS_CLK/(16*OR32_CONSOLE_BAUD)
 
 ENTRY(_early_uart_init)
-	l.movhi	r3,hi(UART_BASE_ADD)
-
-	l.addi	r4,r0,0x7
-	l.sb	0x2(r3),r4
-
-	l.addi	r4,r0,0x0
-	l.sb	0x1(r3),r4
-
-	l.addi	r4,r0,0x3
-	l.sb	0x3(r3),r4
-
-	l.lbz	r5,3(r3)
-	l.ori	r4,r5,0x80
-	l.sb	0x3(r3),r4
-	l.addi	r4,r0,((UART_DIVISOR>>8) & 0x000000ff)
-	l.sb	UART_DLM(r3),r4
-	l.addi  r4,r0,((UART_DIVISOR) & 0x000000ff)
-	l.sb	UART_DLL(r3),r4
-	l.sb	0x3(r3),r5
-
 	l.jr	r9
 	l.nop
 
@@ -1798,6 +1772,9 @@ _string_epc_prefix:
 
 _string_nl:
 	.string "\n\r\0"
+
+_string_mmu:
+	.string "MMU Started.\n\0"
 
 
 /* ========================================[ page aligned structures ]=== */
