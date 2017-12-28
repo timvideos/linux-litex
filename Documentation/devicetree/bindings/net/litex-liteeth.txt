@@ -1,0 +1,21 @@
+LiteX Liteeth
+
+Required properties:
+ - compatible: Must be "litex,liteeth"
+ - reg: Two register and length pairs:
+   - first: MAC MMIO registers 
+   - second: Packet memory
+ - interrupts: Interrupt number for the device
+ - litex,num-tx-queues: Number of Tx queues supported by the hardware
+ - litex,num-rx-queues: Number of Rx queues supported by the hardware
+
+Example:
+
+  mac0: mac@e0007800 {
+  	compatible = "litex,liteeth";
+  	reg = <0xe0008800 0x44
+  	       0xb0000000 0x2000>;
+  	interrupts = <3>;
+  	litex,num-tx-queues = <2>;
+  	litex,num-rx-queues = <2>;
+  };
