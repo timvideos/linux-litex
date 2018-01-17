@@ -1,6 +1,7 @@
 /dts-v1/;
 
 #include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/litex.h>
 
 / {
 	compatible = "opencores,or1ksim";
@@ -41,7 +42,7 @@
 	serial0: serial@e0001000 {
 		device_type = "serial";
 		compatible = "litex,litex-uart";
-		reg = <0xe0001000 0x100>;
+		reg = <CSR_UART_BASE 0x100>;
 		interrupts = <2>;
 	};
 
