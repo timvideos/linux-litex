@@ -74,6 +74,7 @@
 
 	green_led_gpios: gpio@e0006800 {
 		compatible = "wd,mbl-gpio", "basic-mmio-gpio";
+		status = "disabled";
 		reg = <0xe0006800 0x1>;
 		reg-names = "dat";
 
