@@ -250,7 +250,7 @@ int __init of_setup_earlycon(const struct earlycon_id *match,
 	}
 	port->mapbase = addr;
 	port->uartclk = BASE_BAUD * 16;
-	port->membase = earlycon_map(port->mapbase, SZ_4K);
+	port->membase = earlycon_map(port->mapbase, SZ_256);
 
 	val = of_get_flat_dt_prop(node, "reg-offset", NULL);
 	if (val)
