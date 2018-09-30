@@ -10,17 +10,17 @@
 	interrupt-parent = <&pic>;
 
 	aliases {
-		serial0 = &serial0;
+		uart0 = &serial0;
 	};
 
 	chosen {
 		bootargs = "earlycon";
-		stdout-path = "serial0:115200";
+		stdout-path = "uart0:115200";
 	};
 
 	memory@0 {
 		device_type = "memory";
-		reg = <0x40000000 0x4000000>;
+		reg = <0x40000000 0x10000000>;
 	};
 
 	cpus {
@@ -29,7 +29,7 @@
 		cpu@0 {
 			compatible = "opencores,or1200-rtlsvn481";
 			reg = <0>;
-			clock-frequency = <50000000>;
+			clock-frequency = <100000000>;
 		};
 	};
 
@@ -39,7 +39,7 @@
 		interrupt-controller;
 	};
 
-	serial0: serial@e0001000 {
+	serial0: serial@e0001800 {
 		device_type = "serial";
 		compatible = "litex,litex-uart";
 		reg = <CSR_UART_BASE 0x100>;
