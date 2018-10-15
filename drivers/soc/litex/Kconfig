@@ -1,0 +1,16 @@
+config SOC_LITEX
+	bool "Litex SoC support"
+	default n
+
+if SOC_LITEX
+
+# SoC
+config LITEX_INFO
+	bool "Litex Info support"
+	depends on OF && PROC_FS
+	default n
+	help
+	  Say y here to enable the litex info driver which allows reading litex
+	  version registers via the /proc/litex file.
+
+endif # SOC_LITEX

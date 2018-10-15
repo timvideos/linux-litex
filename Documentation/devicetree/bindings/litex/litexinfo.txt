@@ -1,0 +1,20 @@
+Litex SoC Info
+===============
+
+SoC's created with the litex fpga development platform contain this version
+info device which provides details on the SoC build configuration and version.
+
+Required properties
+-------------------
+ - compatible: Must include "litex,litexinfo"
+
+Nodes:
+----------
+ - reg: Location of the litexinfo in memory.
+
+Example:
+	litexinfo: litexinfo@e0006000 {
+		compatible = "litex,litexinfo";
+		reg = <CSR_INFO_BASE 0xff>;
+	};
+
