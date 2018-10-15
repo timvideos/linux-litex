@@ -56,6 +56,11 @@
 		rx-fifo-depth = <2>;
         };
 
+	litexinfo: litexinfo@e0006000 {
+		compatible = "litex,litexinfo";
+		reg = <CSR_INFO_BASE 0xff>;
+        };
+
 	leds {
 		compatible = "gpio-leds";
 
